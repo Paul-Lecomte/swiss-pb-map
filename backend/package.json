@@ -1,0 +1,31 @@
+{
+  "name": "swiss_networkd_map",
+  "version": "1.0.0",
+  "description": "Web app for public transport in SWitzerland",
+  "main": "server.js",
+  "scripts": {
+    "dev": "nodemon server.js"
+  },
+  "author": "Lecomte Paul",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.7.9",
+    "bcrypt": "^5.1.1",
+    "cheerio": "^1.0.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "csv-parse": "^5.6.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-async-handler": "^1.2.0",
+    "gtfs-realtime-bindings": "^1.1.1",
+    "js-priority-queue": "^0.1.5",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.9.7",
+    "morgan": "^1.10.0",
+    "unzipper": "^0.12.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}
