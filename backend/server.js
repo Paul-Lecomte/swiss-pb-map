@@ -8,6 +8,7 @@ const corsOptions = require('./config/corsOptions');
 const connectDB = require('./config/dbConnection');
 const cookieParser = require('cookie-parser');
 const http = require('http');
+const morgan = require('morgan');
 
 const PORT = process.env.PORT || 3000;
 
