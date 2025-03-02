@@ -84,7 +84,6 @@ This project is open-source under the MIT License.
 
 - **Author**: Paul Lecomte
 - **GitHub**: [Paul-Lecomte](https://github.com/Paul-Lecomte)
-- **Email**: your-email@example.com
 
 ---
 
