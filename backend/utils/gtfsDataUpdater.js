@@ -8,7 +8,7 @@ const { parse } = require('csv-parse');
 const stream = require('stream');
 const cheerio = require('cheerio');
 const mongoose = require('mongoose');
-const connectDB = require('../config/dbConnection'); // ✅ Import existing DB connection
+const connectDB = require('../config/dbConnection');
 
 // Import models
 const Agency = require('../model/agencyModel');
