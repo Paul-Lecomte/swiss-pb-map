@@ -11,15 +11,15 @@ const mongoose = require('mongoose');
 const connectDB = require('../config/dbConnection'); // ✅ Import existing DB connection
 
 // Import models
-const Agency = require('../models/agencyModel');
-const Calendar = require('../models/calendarModel');
-const CalendarDate = require('../models/calendarDatesModel');
-const FeedInfo = require('../models/feedInfoModel');
-const Route = require('../models/routesModel');
-const StopTime = require('../models/stopTimesModel');
-const Stop = require('../models/stopsModel');
-const Transfer = require('../models/transfersModel');
-const Trip = require('../models/tripsModel');
+const Agency = require('../model/agencyModel');
+const Calendar = require('../model/calendarModel');
+const CalendarDate = require('../model/calendarDatesModel');
+const FeedInfo = require('../model/feedInfoModel');
+const Route = require('../model/routesModel');
+const StopTime = require('../model/stopTimesModel');
+const Stop = require('../model/stopsModel');
+const Transfer = require('../model/transfersModel');
+const Trip = require('../model/tripsModel');
 
 const pipeline = promisify(stream.pipeline);
 const DATA_DIR = path.join(__dirname, 'gtfs_data');
