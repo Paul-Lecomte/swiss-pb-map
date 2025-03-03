@@ -1,6 +1,6 @@
 const mongoose = require('mongoose')
 
-const agencySchema =new mongoose.schema({
+const agencySchema =new mongoose.Schema({
     agency_id: String,
     agency_name: String,
     agency_url: String,
