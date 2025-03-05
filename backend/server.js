@@ -22,7 +22,8 @@ app.use(express.json());
 app.use(cookieParser());
 app.use(morgan('dev'));
 
-
+// Routes
+app.use('/api/trip', require('./route/tripRoute'));
 
 app.get('/', (req, res) => {
     res.send('Welcome to the RailQuest API!');
