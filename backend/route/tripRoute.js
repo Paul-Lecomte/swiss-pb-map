@@ -6,3 +6,5 @@ const router = express.Router();
 // @route    GET /api/trip/:_id
 // @access   public
 router.route('/:_id').get(tripController.getTrip);
+
+module.exports = router;
