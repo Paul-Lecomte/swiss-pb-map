@@ -99,6 +99,9 @@ const getTimetable = asyncHandler(async (req, res) => {
                 stop_name: stop ? stop.stop_name : "Unknown Stop",
                 arrival_time: st.arrival_time,
                 departure_time: st.departure_time,
+                stop_lat: stop.stop_lat,
+                stop_lon: stop.stop_lon,
+                parent_station: st.parent_station,
                 stop_sequence: st.stop_sequence,
             };
         });
@@ -117,6 +120,7 @@ const getTimetable = asyncHandler(async (req, res) => {
                 route_id: route.route_id,
                 route_short_name: route.route_short_name,
                 route_long_name: route.route_long_name,
+                trip_headsign: trip.trip_headsign,
             },
             past_stops: pastStops,
             current_stop: currentStop,
