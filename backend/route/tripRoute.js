@@ -5,6 +5,6 @@ const router = express.Router();
 // @desc     Get trip info
 // @route    GET /api/trip/:_id
 // @access   public
-router.route('/:_id').get(tripController.getTrip);
+router.route('/:stop_id').get(tripController.getTrip);
 
 module.exports = router;
