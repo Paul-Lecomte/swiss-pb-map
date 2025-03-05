@@ -56,7 +56,7 @@ const getTimetable = asyncHandler(async (req, res) => {
         const { stop_id, date } = req.params;
         const currentTime = new Date().toTimeString().split(" ")[0]; // Format HH:MM:SS
 
-        // Step 1: Find stoptimes for the given stop_id on the given date
+        // Step 1: Find stoptimes for the given stop_id
         const stoptimes = await StopTime.find({ stop_id }).sort({ stop_sequence: 1 });
 
         if (!stoptimes.length) {
@@ -91,7 +91,7 @@ const getTimetable = asyncHandler(async (req, res) => {
         const stopIds = allStoptimes.map(st => st.stop_id);
         const stops = await Stop.find({ stop_id: { $in: stopIds } });
 
-        // Step 7: Attach stop names to stoptimes
+        // Step 7: Attach stop names to stoptimes and sort by stop_sequence
         const stoptimesWithStopNames = allStoptimes.map(st => {
             const stop = stops.find(s => s.stop_id === st.stop_id);
             return {
@@ -103,12 +103,15 @@ const getTimetable = asyncHandler(async (req, res) => {
             };
         });
 
-        // Step 8: Split into past, current, and future stops
+        // Step 8: Sort the stops based on the stop_sequence
+        stoptimesWithStopNames.sort((a, b) => a.stop_sequence - b.stop_sequence);
+
+        // Step 9: Split into past, current, and future stops
         const pastStops = stoptimesWithStopNames.filter(st => st.departure_time < currentTime);
         const futureStops = stoptimesWithStopNames.filter(st => st.arrival_time >= currentTime);
         const currentStop = stoptimesWithStopNames.find(st => st.stop_id === stop_id) || null;
 
-        // Step 9: Send structured response
+        // Step 10: Send structured response
         res.json({
             route: {
                 route_id: route.route_id,
