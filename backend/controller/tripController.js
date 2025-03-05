@@ -2,6 +2,9 @@ const asyncHandler = require("express-async-handler");
 const StopTime = require("../model/stopTimesModel");
 const Trip = require("../model/tripsModel");
 const Route = require("../model/routesModel");
+const Stop = require("../model/stopsModel");
+const Calendar = require("../model/calendarModel");
+const CalendarDate = require("../model/calendarDatesModel");
 
 const getTrip = asyncHandler(async (req, res) => {
     try {
