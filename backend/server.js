@@ -22,7 +22,6 @@ app.use(express.json());
 app.use(cookieParser());
 app.use(morgan('dev'));
 
-// Routes
 
 
 app.get('/', (req, res) => {
