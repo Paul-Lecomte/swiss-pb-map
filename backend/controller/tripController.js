@@ -1,4 +1,6 @@
 const asyncHandler = require("express-async-handler");
+const axios = require("axios");
+const gtfsRealtimeBindings = require("gtfs-realtime-bindings");
 const StopTime = require("../model/stopTimesModel");
 const Trip = require("../model/tripsModel");
 const Route = require("../model/routesModel");
