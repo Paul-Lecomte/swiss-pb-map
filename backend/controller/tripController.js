@@ -54,18 +54,21 @@ const getTrip = asyncHandler(async (req, res) => {
 
 const getTimetable = asyncHandler(async (req, res) => {
     try {
-        const { stop_id, date } = req.params;
+        const { stop_id } = req.params;
         const currentTime = new Date().toTimeString().split(" ")[0]; // Format HH:MM:SS
 
-        // Step 1: Find stoptimes for the given stop_id
-        const stoptimes = await StopTime.find({ stop_id }).sort({ stop_sequence: 1 });
+        // Fetch GTFS Realtime updates
+        const realtimeUpdates = await fetchGTFSData();
+
+        // Step 1: Find static stoptimes
+        let stoptimes = await StopTime.find({ stop_id }).sort({ stop_sequence: 1 });
 
         if (!stoptimes.length) {
             return res.status(404).json({ message: "No stoptimes found for this stop" });
         }
 
-        // Step 2: Find the first ongoing trip for this stop (closest future trip)
-        const ongoingStoptime = stoptimes.find(st => st.departure_time >= currentTime);
+        // Step 2: Find the closest upcoming trip
+        let ongoingStoptime = stoptimes.find(st => st.departure_time >= currentTime);
 
         if (!ongoingStoptime) {
             return res.status(404).json({ message: "No active trips currently for this stop" });
@@ -73,49 +76,64 @@ const getTimetable = asyncHandler(async (req, res) => {
 
         const { trip_id } = ongoingStoptime;
 
-        // Step 3: Find the trip details
+        // Step 3: Find trip details
         const trip = await Trip.findOne({ trip_id });
-        if (!trip) {
-            return res.status(404).json({ message: "Trip not found" });
-        }
+        if (!trip) return res.status(404).json({ message: "Trip not found" });
 
-        // Step 4: Find the route details
+        // Step 4: Find route details
         const route = await Route.findOne({ route_id: trip.route_id });
-        if (!route) {
-            return res.status(404).json({ message: "Route not found" });
-        }
+        if (!route) return res.status(404).json({ message: "Route not found" });
 
-        // Step 5: Find all stops for this trip, ordered by sequence
-        const allStoptimes = await StopTime.find({ trip_id }).sort({ stop_sequence: 1 });
+        // Step 5: Find all stops for this trip
+        let allStoptimes = await StopTime.find({ trip_id }).sort({ stop_sequence: 1 });
 
-        // Step 6: Get stop details
+        // Step 6: Find stop details
         const stopIds = allStoptimes.map(st => st.stop_id);
         const stops = await Stop.find({ stop_id: { $in: stopIds } });
 
-        // Step 7: Attach stop names to stoptimes and sort by stop_sequence
-        const stoptimesWithStopNames = allStoptimes.map(st => {
+        // Step 7: Apply GTFS Realtime Updates
+        const updatedStoptimes = allStoptimes.map(st => {
+            const update = realtimeUpdates.find(rt =>
+                rt.tripUpdate?.trip?.tripId === st.trip_id &&
+                rt.tripUpdate?.stopTimeUpdate?.some(su => su.stopId === st.stop_id)
+            );
+
+            if (update) {
+                const stopUpdate = update.tripUpdate.stopTimeUpdate.find(su => su.stopId === st.stop_id);
+                return {
+                    ...st.toObject(),
+                    arrival_time: stopUpdate?.arrival?.time || st.arrival_time,
+                    departure_time: stopUpdate?.departure?.time || st.departure_time,
+                    delay: stopUpdate?.arrival?.delay || 0
+                };
+            }
+            return { ...st.toObject(), delay: 0 };
+        });
+
+        // Step 8: Attach stop names
+        const stoptimesWithStopNames = updatedStoptimes.map(st => {
             const stop = stops.find(s => s.stop_id === st.stop_id);
             return {
                 stop_id: st.stop_id,
                 stop_name: stop ? stop.stop_name : "Unknown Stop",
                 arrival_time: st.arrival_time,
                 departure_time: st.departure_time,
-                stop_lat: stop.stop_lat,
-                stop_lon: stop.stop_lon,
-                parent_station: st.parent_station,
+                delay: st.delay,
+                stop_lat: stop?.stop_lat,
+                stop_lon: stop?.stop_lon,
                 stop_sequence: st.stop_sequence,
             };
         });
 
-        // Step 8: Sort the stops based on the stop_sequence
+        // Step 9: Sort stops
         stoptimesWithStopNames.sort((a, b) => a.stop_sequence - b.stop_sequence);
 
-        // Step 9: Split into past, current, and future stops
+        // Step 10: Split past, current, and future stops
         const pastStops = stoptimesWithStopNames.filter(st => st.departure_time < currentTime);
         const futureStops = stoptimesWithStopNames.filter(st => st.arrival_time >= currentTime);
         const currentStop = stoptimesWithStopNames.find(st => st.stop_id === stop_id) || null;
 
-        // Step 10: Send structured response
+        // Step 11: Send structured response
         res.json({
             route: {
                 route_id: route.route_id,
@@ -129,6 +147,7 @@ const getTimetable = asyncHandler(async (req, res) => {
         });
 
     } catch (error) {
+        console.error("Error in getTimetable:", error);
         res.status(500).json({ message: "Server error", error: error.message });
     }
 });
