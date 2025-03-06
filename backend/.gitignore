@@ -29,3 +29,5 @@ gtfs_data
 
 # logins
 .env
+
+gtfs-realtime-data.bin
