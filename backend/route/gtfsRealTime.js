@@ -1,24 +1,27 @@
-const axios = require('axios');
+const axios = require("axios");
+const gtfsRealtimeBindings = require("gtfs-realtime-bindings");
 
-const API_URL = 'https://api.opentransportdata.swiss/la/gtfs-rt';
+const API_URL = "https://api.opentransportdata.swiss/la/gtfs-rt";
 const TOKEN = process.env.API_TOKEN;
 
 async function fetchGTFSData() {
     try {
         const response = await axios.get(API_URL, {
             headers: {
-                'Authorization': `Bearer ${TOKEN}`,
-                'User-Agent': 'RailQuest',
-                'Content-Type': 'application/octet-stream'
+                "Authorization": `Bearer ${TOKEN}`,
+                "User-Agent": "RailQuest",
+                "Content-Type": "application/octet-stream"
             },
-            responseType: 'arraybuffer'  // Binary response
+            responseType: "arraybuffer"
         });
 
-        console.log('GTFS Realtime Data Received:', response.data);
-        return response.data;
+        // Decode GTFS Realtime data
+        const feed = gtfsRealtimeBindings.FeedMessage.decode(new Uint8Array(response.data));
+        return feed.entity; // Return list of realtime updates
     } catch (error) {
-        console.error('Error fetching GTFS data:', error);
+        console.error("Error fetching GTFS Realtime data:", error);
+        return [];
     }
 }
 
-fetchGTFSData();
+module.exports = fetchGTFSData;
