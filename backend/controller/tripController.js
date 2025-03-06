@@ -3,6 +3,7 @@ const StopTime = require("../model/stopTimesModel");
 const Trip = require("../model/tripsModel");
 const Route = require("../model/routesModel");
 const Stop = require("../model/stopsModel");
+const fetchGTFSData = require("../utils/gtfsRealTime");
 
 const getTrip = asyncHandler(async (req, res) => {
     try {
