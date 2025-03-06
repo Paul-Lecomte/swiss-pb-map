@@ -6,6 +6,8 @@ const Trip = require("../model/tripsModel");
 const Route = require("../model/routesModel");
 const Stop = require("../model/stopsModel");
 
+const REALTIME_FEED_URL = "https://your-gtfs-realtime-feed-url";
+
 const getTrip = asyncHandler(async (req, res) => {
     try {
         const { stop_id } = req.params;
