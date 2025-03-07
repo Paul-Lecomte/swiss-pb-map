@@ -17,4 +17,9 @@ router.route('/timetable/:stop_id').get(tripController.getTimetable);
 // @access   public
 router.route('/all').get(tripController.getAllStops);
 
+// @desc     Search stop by name
+// @route    GET /api/trip/search
+// @access   public
+router.route('/search').get(tripController.searchStopByName);
+
 module.exports = router;
