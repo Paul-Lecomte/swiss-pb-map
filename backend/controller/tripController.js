@@ -138,8 +138,7 @@ const getTimetable = asyncHandler(async (req, res) => {
         stoptimesWithStopNames.sort((a, b) => a.stop_sequence - b.stop_sequence);
 
         // Step 10: Split past, current, and future stops
-        const pastStops = stoptimesWithStopNames.filter(st => st.departure_time < currentTime);
-        const futureStops = stoptimesWithStopNames.filter(st => st.arrival_time >= currentTime);
+        const allStops = stoptimesWithStopNames.filter(st => st.arrival_time >= currentTime);
         const currentStop = stoptimesWithStopNames.find(st => st.stop_id === stop_id) || null;
 
         // Step 11: Send structured response
@@ -150,9 +149,8 @@ const getTimetable = asyncHandler(async (req, res) => {
                 route_long_name: route.route_long_name,
                 trip_headsign: trip.trip_headsign,
             },
-            past_stops: pastStops,
             current_stop: currentStop,
-            future_stops: futureStops,
+            all_the_stops: allStops,
         });
 
     } catch (error) {
