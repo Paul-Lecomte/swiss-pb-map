@@ -5,6 +5,10 @@ const Route = require("../model/routesModel");
 const Stop = require("../model/stopsModel");
 const fetchGTFSData = require("../utils/gtfsRealTime");
 
+const getAllStops = asyncHandler(async (req, res) => {
+
+})
+
 const getTrip = asyncHandler(async (req, res) => {
     try {
         const { stop_id } = req.params;
