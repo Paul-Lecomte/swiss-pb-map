@@ -6,7 +6,12 @@ const Stop = require("../model/stopsModel");
 const fetchGTFSData = require("../utils/gtfsRealTime");
 
 const getAllStops = asyncHandler(async (req, res) => {
-
+    try {
+        const stops = await Stop.find({});
+        res.status(200).json(stops);
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to fetch stops', error: error.message });
+    }
 })
 
 const getTrip = asyncHandler(async (req, res) => {
