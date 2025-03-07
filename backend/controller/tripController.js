@@ -163,5 +163,6 @@ const getTimetable = asyncHandler(async (req, res) => {
 
 module.exports = {
     getTrip,
-    getTimetable
+    getTimetable,
+    getAllStops
 };
