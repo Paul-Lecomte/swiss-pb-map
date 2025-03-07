@@ -159,8 +159,23 @@ const getTimetable = asyncHandler(async (req, res) => {
     }
 });
 
+const searchStopByName = asyncHandler(async (req, res) => {
+    try {
+        const { name } = req.query; // Extract query parameter
+        if (!name) {
+            return res.status(400).json({ message: "Search query is required" });
+        }
+
+        const stop = await Stop.find({ stop_name: { $regex: name, $options: 'i' } });
+        res.status(200).json(stop);
+    } catch (error) {
+        res.status(500).json({ message: 'Search failed', error: error.message });
+    }
+});
+
 module.exports = {
     getTrip,
     getTimetable,
-    getAllStops
+    getAllStops,
+    searchStopByName,
 };
