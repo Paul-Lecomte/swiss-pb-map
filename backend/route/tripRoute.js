@@ -5,7 +5,7 @@ const router = express.Router();
 // @desc     Get trip info
 // @route    GET /api/trip/:_id
 // @access   public
-router.route('/:stop_id').get(tripController.getTrip);
+router.route('/id/:stop_id').get(tripController.getTrip);
 
 // @desc     Get timetable for a given stop
 // @route    GET /api/trip/timetable/:_id
