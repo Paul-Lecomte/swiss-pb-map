@@ -69,7 +69,6 @@ SwissTransitMap is an interactive web application that visualizes Switzerland's 
 - [ ] **Route Planning Implementation**
 - [ ] **User Accounts & Custom Routes**
 - [ ] **Expand to European Transit Networks**
-- 
 
 ## 🤝 Contributing
 
