@@ -20,7 +20,7 @@ SwissTransitMap is an interactive web application that visualizes Switzerland's 
 - **Database**: Local MongoDB (for GTFS data storage)
 - **Mapping**: Leaflet.js + OpenStreetMap
 - **Data Processing**: GTFS Parser, RAPTOR Algorithm (for route planning waaaaaay after)
-a
+
 ## 📦 Installation
 
 1. **Clone the Repository**
