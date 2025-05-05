@@ -175,59 +175,71 @@ const searchStopByName = asyncHandler(async (req, res) => {
 
 const stopsPosAndRoutes = asyncHandler(async (req, res) => {
     try {
-        // Create response stream
+        // Set response headers for streaming JSON
         res.setHeader("Content-Type", "application/json");
         res.write("[");
 
         let isFirst = true;
+        let count = 0;
 
-        // Preload all trips and routes, but not stoptimes
+        // Load all trips and routes once
         const trips = await Trip.find();
         const routes = await Route.find();
 
         const tripMap = new Map(trips.map(t => [t.trip_id, t]));
         const routeMap = new Map(routes.map(r => [r.route_id, r]));
 
+        // Create a cursor for stops to stream processing
         const stopCursor = Stop.find().cursor();
 
         for await (const stop of stopCursor) {
-            // For each stop, find all its stoptimes
-            const stoptimes = await StopTime.find({ stop_id: stop.stop_id });
+            try {
+                console.log("started")
+                // Fetch stoptimes for this stop only
+                const stoptimes = await StopTime.find({ stop_id: stop.stop_id });
 
-            const tripIds = [...new Set(stoptimes.map(st => st.trip_id))];
-            const tripsForStop = tripIds.map(id => tripMap.get(id)).filter(Boolean);
-            const routeIds = [...new Set(tripsForStop.map(trip => trip.route_id))];
-            const routesForStop = routeIds.map(id => routeMap.get(id)).filter(Boolean);
+                if (stoptimes.length === 0) continue;
 
-            const result = {
-                stop_id: stop.stop_id,
-                stop_name: stop.stop_name,
-                stop_lat: stop.stop_lat,
-                stop_lon: stop.stop_lon,
-                trips: tripsForStop.map(trip => ({
-                    trip_id: trip.trip_id,
-                    trip_headsign: trip.trip_headsign,
-                    route_id: trip.route_id
-                })),
-                routes: routesForStop.map(route => ({
-                    route_id: route.route_id,
-                    route_short_name: route.route_short_name,
-                    route_long_name: route.route_long_name
-                }))
-            };
+                const tripIds = [...new Set(stoptimes.map(st => st.trip_id))];
+                const tripsForStop = tripIds.map(id => tripMap.get(id)).filter(Boolean);
+                const routeIds = [...new Set(tripsForStop.map(trip => trip.route_id))];
+                const routesForStop = routeIds.map(id => routeMap.get(id)).filter(Boolean);
 
-            res.write((isFirst ? "" : ",") + JSON.stringify(result));
-            isFirst = false;
+                const result = {
+                    stop_id: stop.stop_id,
+                    stop_name: stop.stop_name,
+                    stop_lat: stop.stop_lat,
+                    stop_lon: stop.stop_lon,
+                    trips: tripsForStop.map(trip => ({
+                        trip_id: trip.trip_id,
+                        trip_headsign: trip.trip_headsign,
+                        route_id: trip.route_id
+                    })),
+                    routes: routesForStop.map(route => ({
+                        route_id: route.route_id,
+                        route_short_name: route.route_short_name,
+                        route_long_name: route.route_long_name
+                    }))
+                };
+                console.log(result)
+
+                res.write((isFirst ? "" : ",") + JSON.stringify(result));
+                isFirst = false;
+                count++;
+            } catch (innerError) {
+                console.warn(`Skipping stop ${stop.stop_id} due to error:`, innerError.message);
+            }
         }
 
         res.write("]");
         res.end();
+        console.log(`✅ Finished streaming ${count} stops.`);
     } catch (error) {
-        console.error("Error in getStopsWithTripsAndRoutes (streamed):", error);
+        console.error("❌ Error in getStopsWithTripsAndRoutes (streamed):", error);
         if (!res.headersSent) {
             res.status(500).json({ message: "Server error", error: error.message });
         } else {
-            res.end(); // Close the stream if headers were already sent
+            res.end(); // Ensure stream is closed
         }
     }
 })
