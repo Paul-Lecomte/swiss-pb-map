@@ -192,21 +192,8 @@ const stopsPosAndRoutes = asyncHandler(async (req, res) => {
         const routes = await Route.find();
         console.log(`✅ Loaded ${routes.length} routes`);
 
-        console.log("🔄 Loading stoptimes...");
-        const stoptimes = await StopTime.find();
-        console.log(`✅ Loaded ${stoptimes.length} stoptimes`);
-
         const tripMap = new Map(trips.map(t => [t.trip_id, t]));
         const routeMap = new Map(routes.map(r => [r.route_id, r]));
-
-        // Preprocess stoptimes by stop_id
-        const stopTimeMap = new Map(); // Map<stop_id, StopTime[]>
-        for (const st of stoptimes) {
-            if (!stopTimeMap.has(st.stop_id)) {
-                stopTimeMap.set(st.stop_id, []);
-            }
-            stopTimeMap.get(st.stop_id).push(st);
-        }
 
         console.log("🔄 Creating stop cursor...");
         const stopCursor = Stop.find().cursor();
@@ -216,7 +203,9 @@ const stopsPosAndRoutes = asyncHandler(async (req, res) => {
             stopCounter++;
             if (stopCounter % 100 === 0) console.log(`📍 Processing stop #${stopCounter}`);
 
-            const stoptimesForStop = stopTimeMap.get(stop.stop_id) || [];
+            // ⚡ Only fetch StopTimes for the current stop
+            const stoptimesForStop = await StopTime.find({ stop_id: stop.stop_id });
+
             const tripIds = [...new Set(stoptimesForStop.map(st => st.trip_id))];
             const tripsForStop = tripIds.map(id => tripMap.get(id)).filter(Boolean);
 
@@ -245,10 +234,7 @@ const stopsPosAndRoutes = asyncHandler(async (req, res) => {
             try {
                 res.write(jsonChunk);
                 isFirst = false;
-
-                // Optional: manually flush small buffer
                 if (res.flush) res.flush();
-
             } catch (writeErr) {
                 console.error(`❌ Write failed for stop ${stop.stop_id}`, writeErr);
             }
