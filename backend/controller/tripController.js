@@ -174,7 +174,62 @@ const searchStopByName = asyncHandler(async (req, res) => {
 });
 
 const stopsPosAndRoutes = asyncHandler(async (req, res) => {
+    try {
+        // Create response stream
+        res.setHeader("Content-Type", "application/json");
+        res.write("[");
 
+        let isFirst = true;
+
+        // Preload all trips and routes, but not stoptimes
+        const trips = await Trip.find();
+        const routes = await Route.find();
+
+        const tripMap = new Map(trips.map(t => [t.trip_id, t]));
+        const routeMap = new Map(routes.map(r => [r.route_id, r]));
+
+        const stopCursor = Stop.find().cursor();
+
+        for await (const stop of stopCursor) {
+            // For each stop, find all its stoptimes
+            const stoptimes = await StopTime.find({ stop_id: stop.stop_id });
+
+            const tripIds = [...new Set(stoptimes.map(st => st.trip_id))];
+            const tripsForStop = tripIds.map(id => tripMap.get(id)).filter(Boolean);
+            const routeIds = [...new Set(tripsForStop.map(trip => trip.route_id))];
+            const routesForStop = routeIds.map(id => routeMap.get(id)).filter(Boolean);
+
+            const result = {
+                stop_id: stop.stop_id,
+                stop_name: stop.stop_name,
+                stop_lat: stop.stop_lat,
+                stop_lon: stop.stop_lon,
+                trips: tripsForStop.map(trip => ({
+                    trip_id: trip.trip_id,
+                    trip_headsign: trip.trip_headsign,
+                    route_id: trip.route_id
+                })),
+                routes: routesForStop.map(route => ({
+                    route_id: route.route_id,
+                    route_short_name: route.route_short_name,
+                    route_long_name: route.route_long_name
+                }))
+            };
+
+            res.write((isFirst ? "" : ",") + JSON.stringify(result));
+            isFirst = false;
+        }
+
+        res.write("]");
+        res.end();
+    } catch (error) {
+        console.error("Error in getStopsWithTripsAndRoutes (streamed):", error);
+        if (!res.headersSent) {
+            res.status(500).json({ message: "Server error", error: error.message });
+        } else {
+            res.end(); // Close the stream if headers were already sent
+        }
+    }
 })
 
 module.exports = {
