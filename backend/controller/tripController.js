@@ -184,30 +184,40 @@ const stopsPosAndRoutes = asyncHandler(async (req, res) => {
         res.write("[");
         let isFirst = true;
 
-        console.log("🔄 Fetching all trips...");
+        console.log("🔄 Loading trips...");
         const trips = await Trip.find();
         console.log(`✅ Loaded ${trips.length} trips`);
 
-        console.log("🔄 Fetching all routes...");
+        console.log("🔄 Loading routes...");
         const routes = await Route.find();
         console.log(`✅ Loaded ${routes.length} routes`);
+
+        console.log("🔄 Loading stoptimes...");
+        const stoptimes = await StopTime.find();
+        console.log(`✅ Loaded ${stoptimes.length} stoptimes`);
 
         const tripMap = new Map(trips.map(t => [t.trip_id, t]));
         const routeMap = new Map(routes.map(r => [r.route_id, r]));
 
+        // Preprocess stoptimes by stop_id
+        const stopTimeMap = new Map(); // Map<stop_id, StopTime[]>
+        for (const st of stoptimes) {
+            if (!stopTimeMap.has(st.stop_id)) {
+                stopTimeMap.set(st.stop_id, []);
+            }
+            stopTimeMap.get(st.stop_id).push(st);
+        }
+
         console.log("🔄 Creating stop cursor...");
         const stopCursor = Stop.find().cursor();
-
         let stopCounter = 0;
 
         for await (const stop of stopCursor) {
             stopCounter++;
-            console.log(`📍 Processing stop #${stopCounter}: ${stop.stop_name} (${stop.stop_id})`);
+            if (stopCounter % 100 === 0) console.log(`📍 Processing stop #${stopCounter}`);
 
-            const stoptimes = await StopTime.find({ stop_id: stop.stop_id });
-            console.log(`⏱️  Found ${stoptimes.length} stoptimes for stop ${stop.stop_id}`);
-
-            const tripIds = [...new Set(stoptimes.map(st => st.trip_id))];
+            const stoptimesForStop = stopTimeMap.get(stop.stop_id) || [];
+            const tripIds = [...new Set(stoptimesForStop.map(st => st.trip_id))];
             const tripsForStop = tripIds.map(id => tripMap.get(id)).filter(Boolean);
 
             const routeIds = [...new Set(tripsForStop.map(trip => trip.route_id))];
@@ -234,19 +244,21 @@ const stopsPosAndRoutes = asyncHandler(async (req, res) => {
 
             try {
                 res.write(jsonChunk);
-                console.log(`✅ Wrote stop ${stop.stop_id} to stream`);
-            } catch (writeErr) {
-                console.error(`❌ Failed to write stop ${stop.stop_id} to stream:`, writeErr);
-            }
+                isFirst = false;
 
-            isFirst = false;
+                // Optional: manually flush small buffer
+                if (res.flush) res.flush();
+
+            } catch (writeErr) {
+                console.error(`❌ Write failed for stop ${stop.stop_id}`, writeErr);
+            }
         }
 
-        console.log("✅ Finished streaming all stops. Ending response.");
+        console.log("✅ Finished all stops. Closing stream.");
         res.write("]");
         res.end();
     } catch (error) {
-        console.error("🔥 Error in getStopsWithTripsAndRoutes (streamed):", error);
+        console.error("🔥 Fatal error in streamed stops API:", error);
         if (!res.headersSent) {
             res.status(500).json({ message: "Server error", error: error.message });
         } else {
