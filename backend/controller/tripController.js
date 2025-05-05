@@ -173,6 +173,10 @@ const searchStopByName = asyncHandler(async (req, res) => {
     }
 });
 
+const stopsPosAndRoutes = asyncHandler(async (req, res) => {
+
+})
+
 module.exports = {
     getTrip,
     getTimetable,
