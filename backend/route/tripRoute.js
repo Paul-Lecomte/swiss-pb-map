@@ -22,4 +22,9 @@ router.route('/all').get(tripController.getAllStops);
 // @access   public
 router.route('/search').get(tripController.searchStopByName);
 
+// @desc     Get all the stops and their trips
+// @route    GET /api/trip/stopspos
+// @access   public
+router.route('/stopspos').get(tripController.stopsPosAndRoutes);
+
 module.exports = router;
