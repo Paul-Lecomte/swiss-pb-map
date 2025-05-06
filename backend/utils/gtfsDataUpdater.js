@@ -20,6 +20,7 @@ const StopTime = require('../model/stopTimesModel');
 const Stop = require('../model/stopsModel');
 const Transfer = require('../model/transfersModel');
 const Trip = require('../model/tripsModel');
+const ProcessedStop = require('../model/processedStopsModel');
 
 const pipeline = promisify(stream.pipeline);
 const DATA_DIR = path.join(__dirname, 'gtfs_data');
