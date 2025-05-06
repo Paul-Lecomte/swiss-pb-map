@@ -241,6 +241,7 @@ async function updateGTFSData() {
                 console.error(`Error processing ${file}:`, error);
             }
         }
+        await populateProcessedStops();
 
         console.log('GTFS data update completed.');
     } finally {
