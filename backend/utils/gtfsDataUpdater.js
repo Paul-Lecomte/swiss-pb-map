@@ -49,7 +49,7 @@ async function getLatestGTFSLink() {
     }
 }
 
-//
+// To do : add a system of batch to not have a overload
 async function populateProcessedStops() {
     console.log('Populating ProcessedStop collection...');
 
