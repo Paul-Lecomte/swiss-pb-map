@@ -49,6 +49,67 @@ async function getLatestGTFSLink() {
     }
 }
 
+async function populateProcessedStops() {
+    console.log('Populating ProcessedStop collection...');
+
+    await ProcessedStop.deleteMany({}); // Clear old data
+
+    const allStops = await Stop.find({});
+    const allStopTimes = await StopTime.find({});
+    const allTrips = await Trip.find({});
+    const allRoutes = await Route.find({});
+
+    const tripMap = new Map();
+    for (const trip of allTrips) {
+        tripMap.set(trip.trip_id, trip);
+    }
+
+    const routeMap = new Map();
+    for (const route of allRoutes) {
+        routeMap.set(route.route_id, route);
+    }
+
+    const stopToRoutes = new Map();
+
+    for (const st of allStopTimes) {
+        if (!stopToRoutes.has(st.stop_id)) stopToRoutes.set(st.stop_id, new Set());
+        stopToRoutes.get(st.stop_id).add(st.trip_id);
+    }
+
+    const processedDocs = [];
+
+    for (const stop of allStops) {
+        const tripIds = stopToRoutes.get(stop.stop_id) || new Set();
+
+        const routes = [...tripIds].map(tripId => {
+            const trip = tripMap.get(tripId);
+            const route = trip ? routeMap.get(trip.route_id) : null;
+
+            return route && trip
+                ? {
+                    route_id: route.route_id,
+                    route_short_name: route.route_short_name,
+                    route_long_name: route.route_long_name,
+                    trip_headsign: trip.trip_headsign
+                }
+                : null;
+        }).filter(Boolean);
+
+        processedDocs.push({
+            stop_id: stop.stop_id,
+            stop_name: stop.stop_name,
+            stop_lat: stop.stop_lat,
+            stop_lon: stop.stop_lon,
+            location_type: stop.location_type,
+            parent_station: stop.parent_station,
+            routes
+        });
+    }
+
+    await ProcessedStop.insertMany(processedDocs);
+    console.log('ProcessedStop collection populated.');
+}
+
 async function downloadGTFS() {
     console.log('Downloading GTFS data...');
     try {
