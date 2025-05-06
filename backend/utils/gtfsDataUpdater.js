@@ -49,6 +49,7 @@ async function getLatestGTFSLink() {
     }
 }
 
+//
 async function populateProcessedStops() {
     console.log('Populating ProcessedStop collection...');
 
