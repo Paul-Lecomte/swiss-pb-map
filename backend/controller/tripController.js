@@ -173,6 +173,8 @@ const searchStopByName = asyncHandler(async (req, res) => {
     }
 });
 
+
+// Currently the results is correct but it is not streamed to the client
 const stopsPosAndRoutes = asyncHandler(async (req, res) => {
     try {
         console.log("🚀 Starting streamed stops API");
