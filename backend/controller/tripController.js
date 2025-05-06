@@ -246,7 +246,7 @@ const stopsPosAndRoutes = asyncHandler(async (req, res) => {
     } catch (error) {
         console.error("🔥 Fatal error in streamed stops API:", error);
         if (!res.headersSent) {
-            res.status(500).json({ message: "Server error", error: error.message });
+            res.status(500).json({ message: "Server_error", error: error.message });
         } else {
             res.end();
         }
