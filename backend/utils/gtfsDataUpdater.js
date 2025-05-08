@@ -124,7 +124,7 @@ async function populateProcessedStops() {
     if (entriesToInsert.length > 0) {
         console.log(`Inserting final batch ${batchNumber} with ${entriesToInsert.length} records into ProcessedStop...`);
         console.debug(JSON.stringify(entriesToInsert, null, 2)); // Optional: comment out if too verbose
-        await saveGTFSData(ProcessedStop, entriesToInsert, 'ProcessedStop');
+        await saveGTFSData(ProcessedStop, entriesToInsert, 'ProcessedStops');
     }
 
     console.log(`Inserted ${processedCount} total ProcessedStop records.`);
