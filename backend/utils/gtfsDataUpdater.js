@@ -51,9 +51,9 @@ async function getLatestGTFSLink() {
 
 // To do : add a system of batch to not have a overload
 async function populateProcessedStops() {
-    console.log('Populating ProcessedStop collection...');
+    console.log('Starting high-performance population of ProcessedStop...');
     await ProcessedStop.deleteMany({});
-    console.log('Cleared existing ProcessedStop collection.');
+    console.log('Cleared ProcessedStop collection.');
 
     const [allTrips, allRoutes] = await Promise.all([
         Trip.find({}),
@@ -65,31 +65,52 @@ async function populateProcessedStops() {
     const routeMap = new Map(allRoutes.map(route => [route.route_id, route]));
 
     const stopCursor = Stop.find({}).cursor();
-    const batchSize = 50;
-    let entriesToInsert = [];
+    const batchSize = 500;
+    let stopsBatch = [];
     let processedCount = 0;
     let batchNumber = 1;
 
     for (let stop = await stopCursor.next(); stop != null; stop = await stopCursor.next()) {
-        console.log(`Processing stop_id=${stop.stop_id}, stop_name=${stop.stop_name}`);
+        stopsBatch.push(stop);
 
-        const stopTimes = await StopTime.find({ stop_id: stop.stop_id });
-        console.log(`Found ${stopTimes.length} stop_times for stop_id=${stop.stop_id}`);
+        if (stopsBatch.length === batchSize) {
+            await processStopBatch(stopsBatch, tripMap, routeMap, batchNumber);
+            processedCount += stopsBatch.length;
+            stopsBatch = [];
+            batchNumber++;
+        }
+    }
 
+    if (stopsBatch.length > 0) {
+        await processStopBatch(stopsBatch, tripMap, routeMap, batchNumber);
+        processedCount += stopsBatch.length;
+    }
+
+    console.log(`Finished. Total ProcessedStop records inserted: ${processedCount}`);
+}
+
+async function processStopBatch(stopsBatch, tripMap, routeMap, batchNumber) {
+    const stopIds = stopsBatch.map(s => s.stop_id);
+    const stopTimes = await StopTime.find({ stop_id: { $in: stopIds } });
+
+    const stopTimeMap = new Map();
+    for (const st of stopTimes) {
+        if (!stopTimeMap.has(st.stop_id)) {
+            stopTimeMap.set(st.stop_id, []);
+        }
+        stopTimeMap.get(st.stop_id).push(st);
+    }
+
+    const processedStops = stopsBatch.map(stop => {
+        const stopTimes = stopTimeMap.get(stop.stop_id) || [];
         const routeSet = new Map();
 
         for (const st of stopTimes) {
             const trip = tripMap.get(st.trip_id);
-            if (!trip) {
-                console.warn(`Trip not found for trip_id=${st.trip_id}, skipping...`);
-                continue;
-            }
+            if (!trip) continue;
 
             const route = routeMap.get(trip.route_id);
-            if (!route) {
-                console.warn(`Route not found for route_id=${trip.route_id}, skipping...`);
-                continue;
-            }
+            if (!route) continue;
 
             routeSet.set(route.route_id, {
                 route_id: route.route_id,
@@ -99,7 +120,7 @@ async function populateProcessedStops() {
             });
         }
 
-        const processedStop = {
+        return {
             stop_id: stop.stop_id,
             stop_name: stop.stop_name,
             stop_lat: stop.stop_lat,
@@ -108,26 +129,10 @@ async function populateProcessedStops() {
             parent_station: stop.parent_station,
             routes: [...routeSet.values()],
         };
+    });
 
-        entriesToInsert.push(processedStop);
-        processedCount++;
-
-        if (entriesToInsert.length === batchSize) {
-            console.log(`Inserting batch ${batchNumber} with ${entriesToInsert.length} records into ProcessedStop...`);
-            console.debug(JSON.stringify(entriesToInsert, null, 2)); // Optional: comment out if too verbose
-            await saveGTFSData(ProcessedStop, entriesToInsert, 'ProcessedStop');
-            entriesToInsert.length = 0;
-            batchNumber++;
-        }
-    }
-
-    if (entriesToInsert.length > 0) {
-        console.log(`Inserting final batch ${batchNumber} with ${entriesToInsert.length} records into ProcessedStop...`);
-        console.debug(JSON.stringify(entriesToInsert, null, 2)); // Optional: comment out if too verbose
-        await saveGTFSData(ProcessedStop, entriesToInsert, 'ProcessedStops');
-    }
-
-    console.log(`Inserted ${processedCount} total ProcessedStop records.`);
+    console.log(`Inserting batch ${batchNumber} with ${processedStops.length} stops...`);
+    await saveGTFSData(ProcessedStop, processedStops, 'ProcessedStop');
 }
 
 async function downloadGTFS() {
