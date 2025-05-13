@@ -65,7 +65,7 @@ async function populateProcessedStops() {
     const routeMap = new Map(allRoutes.map(route => [route.route_id, route]));
 
     const stopCursor = Stop.find({}).cursor();
-    const batchSize = 500;
+    const batchSize = 1000;
     let stopsBatch = [];
     let processedCount = 0;
     let batchNumber = 1;
