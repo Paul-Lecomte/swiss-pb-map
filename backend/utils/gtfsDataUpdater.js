@@ -115,8 +115,12 @@ async function processStopBatch(stopsBatch, tripMap, routeMap, batchNumber) {
             routeSet.set(route.route_id, {
                 route_id: route.route_id,
                 route_short_name: route.route_short_name,
+                route_type: route.route_type,
+                route_desc: route.route_desc,
                 route_long_name: route.route_long_name,
                 trip_headsign: trip.trip_headsign,
+                trip_id: trip.trip_id,
+                trip_short_name: trip.trip_short_name,
             });
         }
 
