@@ -13,8 +13,12 @@ const processedStopsSchema = new mongoose.Schema({
         {
             route_id: String,
             route_short_name: String,
+            route_type: String,
+            route_desc:String,
             route_long_name: String,
-            trip_headsign: String
+            trip_headsign: String,
+            trip_id: String,
+            trip_short_name: String,
         }
     ]
 });
