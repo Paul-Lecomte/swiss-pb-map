@@ -15,6 +15,10 @@ const getAllStops = asyncHandler(async (req, res) => {
     }
 })
 
+const getAllProcessedStops = asyncHandler(async (req, res) => {
+
+})
+
 const getTrip = asyncHandler(async (req, res) => {
     try {
         const { stop_id } = req.params;
