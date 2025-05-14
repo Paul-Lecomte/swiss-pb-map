@@ -16,7 +16,12 @@ const getAllStops = asyncHandler(async (req, res) => {
 })
 
 const getAllProcessedStops = asyncHandler(async (req, res) => {
-
+    try {
+        const processedStops = await ProcessedStop.find({});
+        res.status(200).json(processedStops);
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to fetch stops', error: error.message });
+    }
 })
 
 const getTrip = asyncHandler(async (req, res) => {
