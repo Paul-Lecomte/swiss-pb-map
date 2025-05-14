@@ -270,5 +270,6 @@ module.exports = {
     getTimetable,
     getAllStops,
     searchStopByName,
-    stopsPosAndRoutes
+    stopsPosAndRoutes,
+    getAllProcessedStops
 };
