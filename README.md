@@ -63,7 +63,7 @@ SwissTransitMap is an interactive web application that visualizes Switzerland's 
 - [x] **Timetable making with a stop_id**
 - [x] **Prepare the data to show the stops**
 - [x] **Fetch all the stops to show them **
-- [ ] **Save the processed stops to mongodb**
+- [x] **Save the processed stops to mongodb**
 - [x] **Update the stops with GTFSRT to have real time delays**
 - [ ] **Basic Map with Routes and Stops**
 - [ ] **Draw the routes between stops based on the roads**
