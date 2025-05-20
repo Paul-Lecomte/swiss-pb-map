@@ -55,7 +55,7 @@ SwissTransitMap is an interactive web application that visualizes Switzerland's 
 
 - **GTFS Data**: Swiss public transport GTFS dataset (Fetched daily for updates)
 - **OpenStreetMap**: For rendering maps
-- **Swiss Transport API**: (Optional) Live transport data
+- **Swiss Transport API**: (Optional) Live transport data 
 
 ## 📌 Roadmap
 
