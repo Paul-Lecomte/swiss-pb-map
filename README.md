@@ -18,7 +18,7 @@ SwissTransitMap is an interactive web application that visualizes Switzerland's 
 - **Frontend**: React, NextJS, Tailwind CSS
 - **Backend**: Node.js, Express.js
 - **Database**: Local MongoDB (for GTFS data storage)
-- **Mapping**: Leaflet.js + OpenStreetMap + OpenMapTiles
+- **Mapping**: Leaflet.js + OpenStreetMap + OpenMapTiles 
 - **Data Processing**: GTFS Parser, RAPTOR Algorithm (for route planning waaaaaay after)
  
 ## 📦 Installation
