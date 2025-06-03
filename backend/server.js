@@ -24,6 +24,7 @@ app.use(morgan('dev'));
 
 // Routes
 app.use('/api/gtfs', require('./route/tripRoute'));
+console.log('Routes loaded');
 
 app.get('/', (req, res) => {
     res.send('Welcome to the RailQuest API!');
