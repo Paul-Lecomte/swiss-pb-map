@@ -271,6 +271,7 @@ async function updateGTFSData() {
             }
         }
         await populateProcessedStops();
+        fs.rmSync(DATA_DIR, { recursive: true, force: true });
 
         console.log('GTFS data update completed.');
     } finally {
