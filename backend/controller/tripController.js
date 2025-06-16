@@ -186,93 +186,10 @@ const searchStopByName = asyncHandler(async (req, res) => {
     }
 });
 
-
-// Currently the results is correct but it is not streamed to the client
-const stopsPosAndRoutes = asyncHandler(async (req, res) => {
-    try {
-        console.log("🚀 Starting streamed stops API");
-
-        res.setHeader("Content-Type", "application/json");
-        res.setHeader("Transfer-Encoding", "chunked");
-        res.flushHeaders();
-
-        res.write("[");
-        let isFirst = true;
-
-        console.log("🔄 Loading trips...");
-        const trips = await Trip.find();
-        console.log(`✅ Loaded ${trips.length} trips`);
-
-        console.log("🔄 Loading routes...");
-        const routes = await Route.find();
-        console.log(`✅ Loaded ${routes.length} routes`);
-
-        const tripMap = new Map(trips.map(t => [t.trip_id, t]));
-        const routeMap = new Map(routes.map(r => [r.route_id, r]));
-
-        console.log("🔄 Creating stop cursor...");
-        const stopCursor = Stop.find().cursor();
-        let stopCounter = 0;
-
-        for await (const stop of stopCursor) {
-            stopCounter++;
-            if (stopCounter % 100 === 0) console.log(`📍 Processing stop #${stopCounter}`);
-
-            // ⚡ Only fetch StopTimes for the current stop
-            const stoptimesForStop = await StopTime.find({ stop_id: stop.stop_id });
-
-            const tripIds = [...new Set(stoptimesForStop.map(st => st.trip_id))];
-            const tripsForStop = tripIds.map(id => tripMap.get(id)).filter(Boolean);
-
-            const routeIds = [...new Set(tripsForStop.map(trip => trip.route_id))];
-            const routesForStop = routeIds.map(id => routeMap.get(id)).filter(Boolean);
-
-            const result = {
-                stop_id: stop.stop_id,
-                stop_name: stop.stop_name,
-                stop_lat: stop.stop_lat,
-                stop_lon: stop.stop_lon,
-                trips: tripsForStop.map(trip => ({
-                    trip_id: trip.trip_id,
-                    trip_headsign: trip.trip_headsign,
-                    route_id: trip.route_id
-                })),
-                routes: routesForStop.map(route => ({
-                    route_id: route.route_id,
-                    route_short_name: route.route_short_name,
-                    route_long_name: route.route_long_name
-                }))
-            };
-
-            const jsonChunk = (isFirst ? "" : ",") + JSON.stringify(result);
-
-            try {
-                res.write(jsonChunk);
-                isFirst = false;
-                if (res.flush) res.flush();
-            } catch (writeErr) {
-                console.error(`❌ Write failed for stop ${stop.stop_id}`, writeErr);
-            }
-        }
-
-        console.log("✅ Finished all stops. Closing stream.");
-        res.write("]");
-        res.end();
-    } catch (error) {
-        console.error("🔥 Fatal error in streamed stops API:", error);
-        if (!res.headersSent) {
-            res.status(500).json({ message: "Server_error", error: error.message });
-        } else {
-            res.end();
-        }
-    }
-})
-
 module.exports = {
     getTrip,
     getTimetable,
     getAllStops,
     searchStopByName,
-    stopsPosAndRoutes,
     getAllProcessedStops
 };
