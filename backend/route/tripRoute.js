@@ -27,9 +27,4 @@ router.route('/search').get(tripController.searchStopByName);
 // @access   public
 router.route('/all_processed_stop').get(tripController.getAllProcessedStops);
 
-// @desc     Get all the stops and their trips
-// @route    GET /api/trip/stopspos
-// @access   public
-//router.route('/stopspos').get(tripController.stopsPosAndRoutes);
-
 module.exports = router;
