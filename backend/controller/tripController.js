@@ -177,6 +177,9 @@ const searchStopByName = asyncHandler(async (req, res) => {
         }
 
         const stop = await Stop.find({ stop_name: { $regex: name, $options: 'i' } });
+        if (!stop.length) {
+            return res.status(404).json({ message: "no stops found" });
+        }
         res.status(200).json(stop);
     } catch (error) {
         res.status(500).json({ message: 'Search failed', error: error.message });
