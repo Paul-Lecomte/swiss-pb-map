@@ -89,6 +89,7 @@ async function populateProcessedStops() {
     console.log(`Finished. Total ProcessedStop records inserted: ${processedCount}`);
 }
 
+// Function to process stops with trip and route data
 async function processStopBatch(stopsBatch, tripMap, routeMap, batchNumber) {
     const stopIds = stopsBatch.map(s => s.stop_id);
     const stopTimes = await StopTime.find({ stop_id: { $in: stopIds } });
