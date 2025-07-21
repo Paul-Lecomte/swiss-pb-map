@@ -12,9 +12,9 @@
   <img alt="Tech Stack" src="https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=white">
   <img alt="Tech Stack" src="https://img.shields.io/badge/Tailwind_CSS-38bdf8?logo=tailwindcss&logoColor=white">
   <img alt="Tech Stack" src="https://img.shields.io/badge/Node.js-339933?logo=node.js&logoColor=white">
-  <img alt="Tech Stack" src="https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white">
+  <img alt="Tech Stack" src="https://img.shields.io/badge/C++-00599C?logo=c%2b%2b&logoColor=white">
   <img alt="Tech Stack" src="https://img.shields.io/badge/MongoDB-47A248?logo=mongodb&logoColor=white">
-  <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg">
+  <img alt="License: GPL v3" src="https://img.shields.io/badge/License-GPLv3-blue.svg">
 </p>
 
 
