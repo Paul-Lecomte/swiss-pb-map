@@ -148,5 +148,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## License
 
-MIT © Paul Lecomte  
-See [LICENSE](./LICENSE) for details.
+This project is licensed under the terms of the GNU General Public License v3.0.  
+Copyright (c) 2025 Paul Lecomte.
+
+See the [LICENSE](./LICENSE) file for details.
