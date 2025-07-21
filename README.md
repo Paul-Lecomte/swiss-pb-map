@@ -5,8 +5,8 @@
 <h1 align="center">SwissTransitMap</h1>
 <p align="center">
   <strong>Swiss public transport network visualization & route planning</strong><br>
-  <a href="https://github.com/Paul-Lecomte/SwissTransitMap/stargazers">
-    <img alt="GitHub stars" src="https://img.shields.io/github/stars/Paul-Lecomte/SwissTransitMap?style=social">
+  <a href="https://github.com/Paul-Lecomte/swiss-pb-map/stargazers">
+    <img alt="GitHub stars" src="https://img.shields.io/github/stars/Paul-Lecomte/swiss-pb-map?style=social">
   </a>
   <img alt="Tech Stack" src="https://img.shields.io/badge/Next.js-000?logo=nextdotjs&logoColor=white&label=Next.js">
   <img alt="Tech Stack" src="https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=white">
