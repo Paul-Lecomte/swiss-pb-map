@@ -15,6 +15,7 @@ dist-ssr
 
 #gtfs data
 gtfs_data
+data/stoptimes.json
 
 # Editor directories and files
 .vscode/*
