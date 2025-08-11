@@ -1,3 +1,4 @@
+// This controller implements Dijkstra's algorithm for finding the fastest path in a GTFS dataset.
 const asyncHandler = require("express-async-handler");
 const fs = require('fs');
 const path = require('path');
