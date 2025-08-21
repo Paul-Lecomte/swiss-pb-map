@@ -42,7 +42,7 @@
 ## Tech Stack
 
 - **Frontend**: React, Next.js, Tailwind CSS, Leaflet.js, OpenStreetMap
-- **Backend**: Node.js, Express.js, Rust (shortest path algorithm)
+- **Backend**: Node.js, Express.js, C++ 23 (shortest path algorithm)
 - **Database**: MongoDB (GTFS storage)
 - **Data**: Swiss GTFS, OpenMapTiles, Swiss Transport API (optional)
 
@@ -55,8 +55,7 @@ SwissTransitMap/
 ├── backend/
 │   ├── server.js
 │   ├── package.json
-│   ├── fastest_path/           # Rust (Cargo) – optimal route calculation
-│   │   ├── Cargo.toml
+│   ├── fastest_path/           # C++ algo for optimal route calculation
 │   │   └── src/
 │   ├── model/                  # Mongoose models (stops, trips, etc.)
 │   ├── controller/             # Node.js business logic
@@ -142,7 +141,6 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 - Official Swiss GTFS data
 - OpenStreetMap & OpenMapTiles
 - Leaflet.js for mapping
-- [kortix-ai/suna](https://github.com/kortix-ai/suna) for README inspiration
 
 ---
 
