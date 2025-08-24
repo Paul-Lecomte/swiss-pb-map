@@ -42,18 +42,39 @@ function extendPath(path, currentStop, currentTime, departureTime, tripId, isTra
 
 async function dijkstraGTFS(from_id, to_id, stoptimes, transfers, departure_time_str = "00:00:00") {
     const initialDepartureSeconds = timeToSeconds(departure_time_str);
+    const MAX_TRAVEL_SECONDS = 6 * 60 * 60; // 6 hours cap to prevent unbounded searches
+    const MAX_EXPANSIONS = 500000; // safety cap on queue pops
+    const MAX_BOARDINGS_PER_VISIT = 50; // limit number of departures considered per stop visit
+
+    const latestAllowedTime = initialDepartureSeconds + MAX_TRAVEL_SECONDS;
+
     const tripStopTimesMap = new Map();
     const tripSequenceMap = new Map();
     const stopDeparturesMap = new Map();
     const transferMap = new Map();
+    const tripSeqToStopTimeMap = new Map();
 
+    // Helper: binary search first index with departure_time >= t
+    function lowerBoundDepartures(list, t) {
+        let lo = 0, hi = list.length;
+        while (lo < hi) {
+            const mid = (lo + hi) >>> 1;
+            const dep = timeToSeconds(list[mid].departure_time);
+            if (dep < t) lo = mid + 1; else hi = mid;
+        }
+        return lo;
+    }
+
+    // Build maps in a single pass
     stoptimes.forEach(st => {
         if (!tripStopTimesMap.has(st.trip_id)) {
             tripStopTimesMap.set(st.trip_id, new Map());
             tripSequenceMap.set(st.trip_id, []);
+            tripSeqToStopTimeMap.set(st.trip_id, new Map());
         }
         tripStopTimesMap.get(st.trip_id).set(st.stop_id, st);
         tripSequenceMap.get(st.trip_id).push(st.stop_sequence);
+        tripSeqToStopTimeMap.get(st.trip_id).set(st.stop_sequence, st);
 
         if (!stopDeparturesMap.has(st.stop_id)) stopDeparturesMap.set(st.stop_id, []);
         stopDeparturesMap.get(st.stop_id).push(st);
@@ -64,15 +85,6 @@ async function dijkstraGTFS(from_id, to_id, stoptimes, transfers, departure_time
         list.sort((a, b) => timeToSeconds(a.departure_time) - timeToSeconds(b.departure_time))
     );
 
-    const tripSeqToStopTimeMap = new Map();
-    for (const [tripId, stopTimesMap] of tripStopTimesMap.entries()) {
-        const seqToStop = new Map();
-        for (const st of stoptimes.filter(s => s.trip_id === tripId)) {
-            seqToStop.set(st.stop_sequence, st);
-        }
-        tripSeqToStopTimeMap.set(tripId, seqToStop);
-    }
-
     transfers.forEach(tr => {
         if (!transferMap.has(tr.from_stop_id)) transferMap.set(tr.from_stop_id, []);
         transferMap.get(tr.from_stop_id).push(tr);
@@ -81,9 +93,14 @@ async function dijkstraGTFS(from_id, to_id, stoptimes, transfers, departure_time
     const queue = new MinHeap();
     queue.push([initialDepartureSeconds, from_id, [], null]);
     const visited = new Map();
+    let expansions = 0;
 
     while (queue.size()) {
         const [currentTime, currentStop, path, currentTripId] = queue.pop();
+        if (currentTime > latestAllowedTime) continue; // prune paths beyond max travel time
+        expansions++;
+        if (expansions > MAX_EXPANSIONS) break; // safety break
+
         const visitedKey = `${currentStop}-${currentTripId || 'null'}`;
         if (visited.has(visitedKey) && visited.get(visitedKey) <= currentTime) continue;
         visited.set(visitedKey, currentTime);
@@ -92,6 +109,7 @@ async function dijkstraGTFS(from_id, to_id, stoptimes, transfers, departure_time
 
         if (currentStop === to_id) return currentPath;
 
+        // Continue riding current trip
         if (currentTripId !== null) {
             const tripStops = tripStopTimesMap.get(currentTripId);
             const currentStoptime = tripStops?.get(currentStop);
@@ -104,7 +122,7 @@ async function dijkstraGTFS(from_id, to_id, stoptimes, transfers, departure_time
                     if (nextStop) {
                         const depTime = Math.max(currentTime, timeToSeconds(currentStoptime.departure_time));
                         const arrTime = timeToSeconds(nextStop.arrival_time);
-                        if (depTime <= arrTime) {
+                        if (depTime <= arrTime && arrTime <= latestAllowedTime) {
                             const newPath = extendPath(path, currentStop, currentTime, depTime, currentTripId);
                             queue.push([arrTime, nextStop.stop_id, newPath, currentTripId]);
                         }
@@ -113,18 +131,27 @@ async function dijkstraGTFS(from_id, to_id, stoptimes, transfers, departure_time
             }
         }
 
+        // Transfers from this stop (only if within time window)
         const transfersFromStop = transferMap.get(currentStop) || [];
         for (const tr of transfersFromStop) {
             const arrTime = currentTime + (tr.min_transfer_time || 0);
+            if (arrTime > latestAllowedTime) continue;
             const newPath = extendPath(path, currentStop, currentTime, currentTime, null, true);
             queue.push([arrTime, tr.to_stop_id, newPath, null]);
         }
 
+        // Board new trips only when not currently on a trip
         if (currentTripId === null) {
             const departures = stopDeparturesMap.get(currentStop) || [];
-            for (const st of departures) {
-                const depTime = timeToSeconds(st.departure_time);
-                if (depTime >= currentTime) {
+            if (departures.length) {
+                let startIdx = lowerBoundDepartures(departures, currentTime);
+                let explored = 0;
+                for (let i = startIdx; i < departures.length && explored < MAX_BOARDINGS_PER_VISIT; i++, explored++) {
+                    const st = departures[i];
+                    const depTime = timeToSeconds(st.departure_time);
+                    if (depTime < currentTime) continue;
+                    if (depTime > latestAllowedTime) break;
+
                     // When boarding a trip from the current stop, advance to the next stop in the trip
                     const sequences = tripSequenceMap.get(st.trip_id);
                     if (!sequences) continue;
@@ -134,7 +161,7 @@ async function dijkstraGTFS(from_id, to_id, stoptimes, transfers, departure_time
                         const nextStopSt = tripSeqToStopTimeMap.get(st.trip_id)?.get(sequences[nextIdx]);
                         if (!nextStopSt) continue;
                         const arrTime = timeToSeconds(nextStopSt.arrival_time);
-                        if (arrTime >= depTime) {
+                        if (arrTime >= depTime && arrTime <= latestAllowedTime) {
                             const newPath = extendPath(path, currentStop, currentTime, depTime, st.trip_id);
                             queue.push([arrTime, nextStopSt.stop_id, newPath, st.trip_id]);
                         }
@@ -170,7 +197,7 @@ const findFastestPath = asyncHandler(async (req, res) => {
     const activeTrips = await Trip.find({ service_id: { $in: allServiceIds } });
     const activeTripIds = activeTrips.map(t => t.trip_id);
 
-    // Lecture des StopTime depuis le fichier local en streaming avec fallback si erreur "Top-level object should be an array"
+    // Reading StopTime from the local file in streaming with fallback if error "Top-level object should be an array"
     const stoptimes = [];
     const stoptimesPath = path.join(__dirname, '../data/stoptimes.json');
     const activeTripIdSet = new Set(activeTripIds);
