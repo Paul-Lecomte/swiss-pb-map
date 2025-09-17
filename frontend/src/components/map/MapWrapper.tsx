@@ -1,11 +1,13 @@
 // frontend/src/components/map/MapWrapper.tsx
 "use client";
 
+import React from "react";
 import dynamic from "next/dynamic";
 
 const Map = dynamic(() => import("./Map"), { ssr: false });
 
 export default function MapWrapper() {
+
     return (
         <div
             style={{
@@ -14,7 +16,7 @@ export default function MapWrapper() {
                 left: 0,
                 width: "100vw",
                 height: "100vh",
-                zIndex: 0, // Carte en arrière-plan
+                zIndex: 0,
             }}
         >
             <Map />
