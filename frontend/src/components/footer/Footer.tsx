@@ -5,6 +5,7 @@ const Footer = () => (
         className="w-full text-center"
         style={{
             position: "fixed",
+            color : "#000000",
             bottom: 0,
             left: 0,
             width: "100vw",

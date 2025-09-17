@@ -5,6 +5,7 @@ const Header = () => (
         className="w-full flex items-center justify-between px-4"
         style={{
             position: "fixed",
+            color : "#000000",
             top: 0,
             left: 0,
             width: "100vw",
