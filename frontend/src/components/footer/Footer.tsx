@@ -2,23 +2,25 @@ import React from 'react';
 
 const Footer = () => (
     <footer
-        className="w-full py-4 bg-gray-100 text-center"
+        className="w-full text-center"
         style={{
             position: "fixed",
             bottom: 0,
             left: 0,
             width: "100vw",
             zIndex: 10,
+            height: "24px",
+            background: "rgba(255,255,255,0.3)",
+            backdropFilter: "blur(8px)",
+            WebkitBackdropFilter: "blur(8px)",
+            borderTop: "1px solid rgba(200,200,200,0.2)",
+            fontSize: "12px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
         }}
     >
-        <div className="flex justify-center gap-6 mb-2">
-            <a href="/about" className="hover:underline">À propos</a>
-            <a href="/contact" className="hover:underline">Contact</a>
-            <a href="/privacy" className="hover:underline">Confidentialité</a>
-        </div>
-        <div className="text-sm text-gray-500">
-            &copy; {new Date().getFullYear()} Votre Société. Tous droits réservés.
-        </div>
+        &copy; {new Date().getFullYear()} Votre Société
     </footer>
 );
 
