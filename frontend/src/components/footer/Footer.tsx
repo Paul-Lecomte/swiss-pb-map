@@ -1,7 +1,16 @@
 import React from 'react';
 
 const Footer = () => (
-    <footer className="w-full py-4 bg-gray-100 text-center">
+    <footer
+        className="w-full py-4 bg-gray-100 text-center"
+        style={{
+            position: "fixed",
+            bottom: 0,
+            left: 0,
+            width: "100vw",
+            zIndex: 10,
+        }}
+    >
         <div className="flex justify-center gap-6 mb-2">
             <a href="/about" className="hover:underline">À propos</a>
             <a href="/contact" className="hover:underline">Contact</a>
