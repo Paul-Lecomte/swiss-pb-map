@@ -1,7 +1,9 @@
+// frontend/src/components/map/Map.tsx
 "use client";
 
 import React from "react";
 import { MapContainer, TileLayer } from "react-leaflet";
+import ZoomControl from "../zoom/ZoomControl"; // ⚡ ton contrôle custom
 import "leaflet/dist/leaflet.css";
 
 const Map = () => (
@@ -16,11 +18,12 @@ const Map = () => (
         }}
     >
         <MapContainer
-            center={[46.516, 6.63282]}  // Lausanne coordinates
+            center={[46.516, 6.63282]}
             zoom={13}
-            style={{ width: "100%", height: "100%" }}
+            style={{ position: "relative", width: "100%", height: "100%" }}
         >
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            <ZoomControl /> {/* ✅ apparaît comme un vrai contrôle */}
         </MapContainer>
     </div>
 );

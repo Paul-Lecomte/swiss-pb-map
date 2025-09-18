@@ -4,7 +4,6 @@ import TransportInfo from "@/components/transport_info/TransportInfo";
 import Search from "../../components/search/Search";
 import SideMenu from "../../components/side_menu/SideMenu";
 import LayerOption from "../../components/layer_option/LayerOption";
-import Zoom from "../../components/zoom/Zoom";
 
 const Header = () => {
 
@@ -30,11 +29,6 @@ const Header = () => {
             }}
              */
         >
-            <a href="/" className="text-base font-bold">VotreLogo</a>
-            <nav className="flex gap-4 text-xs">
-                <a href="/features" className="hover:underline">Fonctionnalités</a>
-                <a href="/about" className="hover:underline">À propos</a>
-            </nav>
             {/* Top search bar overlay */}
             <div
                 style={{
@@ -81,18 +75,6 @@ const Header = () => {
                     <LayerOption onClose={() => setLayerOpen(false)} />
                 </div>
             )}
-
-            {/* Right-side zoom control (visual) */}
-            <div
-                style={{
-                    position: "absolute",
-                    right: 12,
-                    top: 80,
-                    zIndex: 20,
-                }}
-            >
-                <Zoom />
-            </div>
         </header>
     )
 };
