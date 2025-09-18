@@ -50,7 +50,7 @@ const Header = () => {
                 <div
                     style={{
                         position: "absolute",
-                        top: 56,
+                        top: 70,
                         left: 16,
                         zIndex: 30,
                     }}
@@ -67,8 +67,8 @@ const Header = () => {
                 <div
                     style={{
                         position: "absolute",
-                        top: 56,
-                        left: 84,
+                        top: 100,
+                        left: 180,
                         zIndex: 25,
                     }}
                 >

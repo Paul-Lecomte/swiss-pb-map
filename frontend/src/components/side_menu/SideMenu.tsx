@@ -32,7 +32,7 @@ export default function SideMenu({ onClose, onLayerOption }: Props) {
           <button style={itemBtn}>Stations</button>
         </li>
         <li>
-          <button style={itemBtn}>VOs</button>
+          <button style={itemBtn}>Options</button>
         </li>
         <li>
           <button style={itemBtn}>About</button>
