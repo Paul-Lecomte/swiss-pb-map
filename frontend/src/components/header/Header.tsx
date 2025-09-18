@@ -34,7 +34,7 @@ const Header = () => {
                 style={{
                     position: "absolute",
                     top: 12,
-                    left: "50%",
+                    left: "35%",
                     transform: "translateX(-50%)",
                     zIndex: 20,
                     width: "min(760px, 90vw)",

@@ -15,7 +15,7 @@ export default function Search({ onHamburger }: Props) {
                 boxShadow: "0 4px 16px rgba(0,0,0,0.10)",
                 padding: "4px 12px",
                 minWidth: 340,
-                maxWidth: 600,
+                maxWidth: 400,
                 width: "100%",
                 border: "1px solid rgba(0,0,0,0.08)",
                 gap: 8,
