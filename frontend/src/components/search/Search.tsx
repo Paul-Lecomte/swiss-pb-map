@@ -45,8 +45,9 @@ export default function Search({ onHamburger }: Props) {
 
             {/* Search field */}
             <input
-                placeholder="Rechercher un lieu, une adresse..."
+                placeholder="Search for a station or line"
                 style={{
+                    color: "#333",
                     flex: 1,
                     height: 36,
                     border: "none",

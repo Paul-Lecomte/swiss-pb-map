@@ -18,7 +18,7 @@ export default function About({ onClose }: Props) {
             }}
         >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <strong style={{ fontSize: 12 }}>À propos</strong>
+                <strong style={{ fontSize: 12 }}>About</strong>
                 <button onClick={onClose} aria-label="Fermer" style={{ background: "transparent", border: "none", cursor: "pointer" }}>✕</button>
             </div>
             <div style={{ fontSize: 12 }}>

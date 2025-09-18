@@ -1,14 +1,52 @@
 "use client";
-import React from 'react';
+import React, { useRef } from 'react';
 import TransportInfo from "@/components/transport_info/TransportInfo";
 import Search from "../../components/search/Search";
 import SideMenu from "../../components/side_menu/SideMenu";
 import LayerOption from "../../components/layer_option/LayerOption";
+import Station from "../../components/station/Station";
+import Option from "../../components/option/Option";
+import About from "../../components/about/About";
 
 const Header = () => {
 
     const [sideOpen, setSideOpen] = React.useState(false);
     const [layerOpen, setLayerOpen] = React.useState(false);
+    const [stationOpen, setStationOpen] = React.useState(false);
+    const [optionOpen, setOptionOpen] = React.useState(false);
+    const [aboutOpen, setAboutOpen] = React.useState(false);
+
+    // Refs for detecting clicks outside
+    const sideMenuRef = useRef<HTMLDivElement>(null);
+    const layerRef = useRef<HTMLDivElement>(null);
+    const stationRef = useRef<HTMLDivElement>(null);
+    const optionRef = useRef<HTMLDivElement>(null);
+    const aboutRef = useRef<HTMLDivElement>(null);
+
+    // Close side menu when clicking outside
+    React.useEffect(() => {
+        function handleClickOutside(event: MouseEvent) {
+            const target = event.target as Node;
+            if (
+                (sideMenuRef.current && sideMenuRef.current.contains(target)) ||
+                (layerRef.current && layerRef.current.contains(target)) ||
+                (stationRef.current && stationRef.current.contains(target)) ||
+                (optionRef.current && optionRef.current.contains(target)) ||
+                (aboutRef.current && aboutRef.current.contains(target))
+            ) {
+                return; // On clique à l'intérieur d'un menu/popup
+            }
+            setSideOpen(false);
+            setLayerOpen(false);
+            setStationOpen(false);
+            setOptionOpen(false);
+            setAboutOpen(false);
+        }
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
+    }, []);
 
     return (
         <header
@@ -48,6 +86,7 @@ const Header = () => {
             {/* Popup side menu near top-left of search */}
             {sideOpen && (
                 <div
+                    ref={sideMenuRef}
                     style={{
                         position: "absolute",
                         top: 70,
@@ -56,8 +95,37 @@ const Header = () => {
                     }}
                 >
                     <SideMenu
-                        onClose={() => setSideOpen(false)}
-                        onLayerOption={() => setLayerOpen((v) => !v)}
+                        onClose={() => {
+                            setSideOpen(false);
+                            setLayerOpen(false);
+                            setStationOpen(false);
+                            setOptionOpen(false);
+                            setAboutOpen(false);
+                        }}
+                        onLayerOption={() => {
+                            setLayerOpen(true);
+                            setStationOpen(false);
+                            setOptionOpen(false);
+                            setAboutOpen(false);
+                        }}
+                        onStation={() => {
+                            setLayerOpen(false);
+                            setStationOpen(true);
+                            setOptionOpen(false);
+                            setAboutOpen(false);
+                        }}
+                        onOption={() => {
+                            setLayerOpen(false);
+                            setStationOpen(false);
+                            setOptionOpen(true);
+                            setAboutOpen(false);
+                        }}
+                        onAbout={() => {
+                            setLayerOpen(false);
+                            setStationOpen(false);
+                            setOptionOpen(false);
+                            setAboutOpen(true);
+                        }}
                     />
                 </div>
             )}
@@ -65,14 +133,60 @@ const Header = () => {
             {/* Layer options popup */}
             {layerOpen && (
                 <div
+                    ref={layerRef}
                     style={{
                         position: "absolute",
-                        top: 100,
+                        top: 104,
                         left: 180,
                         zIndex: 25,
                     }}
                 >
                     <LayerOption onClose={() => setLayerOpen(false)} />
+                </div>
+            )}
+
+            {/* Stations popup */}
+            {stationOpen && (
+                <div
+                    ref={stationRef}
+                    style={{
+                        position: "absolute",
+                        top: 136,
+                        left: 180,
+                        zIndex: 25,
+                    }}
+                >
+                    <Station onClose={() => setStationOpen(false)} />
+                </div>
+            )}
+
+            {/* Options popup */}
+            {optionOpen && (
+                <div
+                    ref={optionRef}
+                    style={{
+                        position: "absolute",
+                        top: 170,
+                        left: 180,
+                        zIndex: 25,
+                    }}
+                >
+                    <Option onClose={() => setOptionOpen(false)} />
+                </div>
+            )}
+
+            {/* À propos popup */}
+            {aboutOpen && (
+                <div
+                    ref={aboutRef}
+                    style={{
+                        position: "absolute",
+                        top: 205,
+                        left: 180,
+                        zIndex: 25,
+                    }}
+                >
+                    <About onClose={() => setAboutOpen(false)} />
                 </div>
             )}
         </header>
