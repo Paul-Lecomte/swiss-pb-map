@@ -128,7 +128,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 - [x] Timetable by stop_id
 - [x] MongoDB save & update
 - [x] Real-time GTFSRT integration
-- [ ] Implementation of stable openmaptile generation
+- [x] Implementation of stable openmaptile generation
 - [ ] Interactive map with routes and stops
 - [ ] Link stops with routes and timetables
 - [ ] Optimal route planning (C++ algorithm)
