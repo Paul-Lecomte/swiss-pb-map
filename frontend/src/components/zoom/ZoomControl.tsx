@@ -42,7 +42,7 @@ const ZoomControlLeaflet = L.Control.extend({
     // Bouton recentrage
     const centerBtn = L.DomUtil.create("button", "", container);
     centerBtn.innerHTML = "●";
-    centerBtn.onclick = () => map.setView([46.516, 6.63282], map.getZoom());
+    centerBtn.onclick = () => map.setView([46.516, 6.63282], 13);
 
     return container;
   },
