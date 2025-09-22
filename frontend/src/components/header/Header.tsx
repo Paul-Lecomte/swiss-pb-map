@@ -16,7 +16,7 @@ const Header = () => {
     const [optionOpen, setOptionOpen] = React.useState(false);
     const [aboutOpen, setAboutOpen] = React.useState(false);
 
-    // Refs pour la détection des clics extérieurs
+    // Refs for detecting clicks outside
     const sideMenuRef = useRef<HTMLDivElement>(null);
     const layerRef = useRef<HTMLDivElement>(null);
     const stationRef = useRef<HTMLDivElement>(null);
