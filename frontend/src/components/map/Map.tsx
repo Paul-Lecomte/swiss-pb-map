@@ -7,7 +7,6 @@ import "leaflet/dist/leaflet.css";
 import { fetchProcessedStops } from "../../services/StopsApiCalls";
 
 const Map = () => {
-    /*
     const [stops, setStops] = useState([]);
 
     useEffect(() => {
@@ -21,7 +20,6 @@ const Map = () => {
         };
         getStops();
     }, []);
-     */
 
     return (
         <div
