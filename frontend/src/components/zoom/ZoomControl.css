@@ -96,3 +96,49 @@
     border: 2px solid white;
     cursor: pointer;
 }
+
+/* Responsive: shrink controls on small screens */
+@media (max-width: 480px) {
+    .zoom-control {
+        top: 50px;
+        right: -20px;
+    }
+
+    .zoom-control button {
+        width: 28px;
+        height: 28px;
+        font-size: 16px;
+        line-height: 28px;
+    }
+    .zoom-slider {
+        width: 90px;
+        height: 6px;
+        margin: 50% 0;
+    }
+    .zoom-slider::-webkit-slider-runnable-track,
+    .zoom-slider::-moz-range-track {
+        height: 6px;
+    }
+    .zoom-slider::-webkit-slider-thumb,
+    .zoom-slider::-moz-range-thumb {
+        width: 12px;
+        height: 12px;
+    }
+}
+
+@media (max-width: 360px) {
+    .zoom-control {
+        gap: 6px;
+        padding-top: 6px;
+    }
+    .zoom-control button {
+        width: 26px;
+        height: 26px;
+        font-size: 15px;
+        line-height: 26px;
+    }
+    .zoom-slider {
+        width: 80px;
+        margin: 30% 0;
+    }
+}
