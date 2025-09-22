@@ -1,6 +1,6 @@
 <!-- PROJECT TITLE & BADGES -->
 <p align="center">
-  <img src="https://your-image-url.com/banner.png" alt="SwissTransitMap Logo" width="120" />
+  <img src="./frontend/public/swisstransitmap_logo.png" alt="SwissTransitMap Logo" width="120" />
 </p>
 <h1 align="center">SwissTransitMap</h1>
 <p align="center">
