@@ -52,20 +52,97 @@
 
 ```bash
 SwissTransitMap/
-├── backend/
-│   ├── server.js
-│   ├── package.json
-│   ├── fastest_path/           # C++ algo for optimal route calculation
-│   │   └── src/
-│   ├── model/                  # Mongoose models (stops, trips, etc.)
-│   ├── controller/             # Node.js business logic
-│   ├── route/                  # Express API routes
-│   ├── utils/                  # GTFS & real-time tools
-│   └── middleware/             # Express middlewares
-├── frontend/                   # (see Next.js/React structure)
-├── public/                     # Static assets (images, favicon)
-├── README.md
-└── LICENSE
+├── backend/                        # Backend server and API logic
+│   ├── server.js                   # Main Node.js server entry point
+│   ├── package.json                # Backend dependencies and scripts
+│   ├── gtfs-realtime-data.bin      # Cached GTFS real-time data
+│   ├── config/                     # Configuration files (DB, CORS, etc.)
+│   │   ├── allowedOrigins.js       # Allowed CORS origins
+│   │   ├── corsOptions.js          # CORS options
+│   │   └── dbConnection.js         # MongoDB connection setup
+│   ├── controller/                 # Node.js business logic
+│   │   ├── algorithmController.js  # Route calculation logic
+│   │   ├── stopController.js       # Stop-related logic
+│   │   └── tripController.js       # Trip-related logic
+│   ├── data/                       # Static and processed data files
+│   │   └── stoptimes.json          # Timetable data
+│   ├── fastest_path/               # C++ shortest path algorithm
+│   │
+│   ├── middleware/                 # Express middlewares
+│   │   └── errorHandler.js         # Error handling middleware
+│   ├── model/                      # Mongoose models (stops, trips, etc.)
+│   │   ├── agencyModel.js          # Agency schema
+│   │   ├── calendarDatesModel.js   # Calendar dates schema
+│   │   ├── calendarModel.js        # Calendar schema
+│   │   ├── feedInfoModel.js        # Feed info schema
+│   │   ├── processedStopsModel.js  # Processed stops schema
+│   │   ├── routesModel.js          # Routes schema
+│   │   ├── stopsModel.js           # Stops schema
+│   │   ├── stopTimesModel.js       # Stop times schema
+│   │   ├── transfersModel.js       # Transfers schema
+│   │   └── tripsModel.js           # Trips schema
+│   ├── route/                      # Express API routes
+│   │   ├── fastestRoute.js         # Fastest route API
+│   │   └── tripRoute.js            # Trip API
+│   ├── utils/                      # GTFS & real-time utilities
+│   │   ├── exportStoptimes.js      # Export timetable data
+│   │   ├── gtfsDataUpdater.js      # GTFS data update logic
+│   │   ├── gtfsRealTime.js         # GTFS real-time integration
+│   │   └── validateJson.py         # JSON validation script
+├── frontend/                       # Next.js/React frontend application
+│   ├── eslint.config.mjs           # ESLint configuration for code linting
+│   ├── next-env.d.ts               # Next.js type declarations for TypeScript
+│   ├── next.config.ts              # Main Next.js configuration
+│   ├── package.json                # Frontend dependencies and scripts
+│   ├── postcss.config.mjs          # PostCSS configuration (e.g., Tailwind CSS)
+│   ├── README.md                   # Frontend documentation
+│   ├── tsconfig.json               # TypeScript configuration
+│   ├── public/                     # Static files accessible by the browser
+│   │   ├── file.svg                # Icon/illustration
+│   │   ├── globe.svg               # Icon/illustration
+│   │   ├── img.png                 # Image
+│   │   ├── next.svg                # Next.js logo
+│   │   ├── swisstransitmap_logo.png# Project logo
+│   │   ├── vercel.svg              # Vercel logo
+│   │   └── window.svg              # Icon/illustration
+│   └── src/
+│       ├── app/                    # Structure and global styles
+│       │   ├── favicon.ico         # Site icon
+│       │   ├── globals.css         # Global styles
+│       │   ├── layout.tsx          # Main application layout
+│       │   └── page.tsx            # Home page
+│       ├── components/             # Reusable React components
+│       │   ├── about/
+│       │   │   └── About.tsx       # "About" section
+│       │   ├── footer/
+│       │   │   └── Footer.tsx      # Footer
+│       │   ├── header/
+│       │   │   ├── Header.css      # Header styles
+│       │   │   └── Header.tsx      # Site header
+│       │   ├── layer_option/
+│       │   │   └── LayerOption.tsx # Map layer options
+│       │   ├── map/
+│       │   │   ├── Map.tsx         # Interactive Leaflet map
+│       │   │   └── MapWrapper.tsx  # Map wrapper
+│       │   ├── option/
+│       │   │   └── Option.tsx      # Miscellaneous options component
+│       │   ├── search/
+│       │   │   ├── Search.css      # Search bar styles
+│       │   │   └── Search.tsx      # Search bar
+│       │   ├── side_menu/
+│       │   │   └── SideMenu.tsx    # Side menu
+│       │   ├── station/
+│       │   │   └── Station.tsx     # Station display
+│       │   ├── transport_info/
+│       │   │   └── TransportInfo.tsx # Transport information
+│       │   └── zoom/
+│       │       ├── ZoomControl.css # Zoom control styles
+│       │       └── ZoomControl.tsx # Map zoom control
+│       └── services/
+│           └── StopsApiCalls.ts    # API calls for stops
+├── public/                         # Static assets (images, favicon)
+├── README.md                       # Project documentation
+└── LICENSE                         # Project license
 ```
 
 ---
