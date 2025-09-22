@@ -23,7 +23,7 @@ router.route('/all').get(tripController.getAllStops);
 router.route('/search').get(tripController.searchStopByName);
 
 // @desc     Get all the stops and their trips
-// @route    GET /api/trip/stopspos
+// @route    GET /api/trip/all_processed_stop
 // @access   public
 router.route('/all_processed_stop').get(tripController.getAllProcessedStops);
 
