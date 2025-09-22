@@ -7,23 +7,22 @@ import LayerOption from "../../components/layer_option/LayerOption";
 import Station from "../../components/station/Station";
 import Option from "../../components/option/Option";
 import About from "../../components/about/About";
+import "./Header.css";
 
 const Header = () => {
-
     const [sideOpen, setSideOpen] = React.useState(false);
     const [layerOpen, setLayerOpen] = React.useState(false);
     const [stationOpen, setStationOpen] = React.useState(false);
     const [optionOpen, setOptionOpen] = React.useState(false);
     const [aboutOpen, setAboutOpen] = React.useState(false);
 
-    // Refs for detecting clicks outside
+    // Refs pour la détection des clics extérieurs
     const sideMenuRef = useRef<HTMLDivElement>(null);
     const layerRef = useRef<HTMLDivElement>(null);
     const stationRef = useRef<HTMLDivElement>(null);
     const optionRef = useRef<HTMLDivElement>(null);
     const aboutRef = useRef<HTMLDivElement>(null);
 
-    // Close side menu when clicking outside
     React.useEffect(() => {
         function handleClickOutside(event: MouseEvent) {
             const target = event.target as Node;
@@ -34,7 +33,7 @@ const Header = () => {
                 (optionRef.current && optionRef.current.contains(target)) ||
                 (aboutRef.current && aboutRef.current.contains(target))
             ) {
-                return; // On clique à l'intérieur d'un menu/popup
+                return;
             }
             setSideOpen(false);
             setLayerOpen(false);
@@ -49,51 +48,13 @@ const Header = () => {
     }, []);
 
     return (
-        <header
-            className="w-full flex items-center justify-between px-4"
-            /*
-            style={{
-                position: "fixed",
-                color : "#000000",
-                top: 0,
-                left: 0,
-                width: "100vw",
-                zIndex: 10,
-                height: "32px",
-                background: "rgba(255,255,255,0.3)",
-                backdropFilter: "blur(8px)",
-                WebkitBackdropFilter: "blur(8px)",
-                borderBottom: "1px solid rgba(200,200,200,0.2)",
-            }}
-             */
-        >
-            {/* Top search bar overlay */}
-            <div
-                style={{
-                    position: "absolute",
-                    top: 12,
-                    left: "35%",
-                    transform: "translateX(-50%)",
-                    zIndex: 20,
-                    width: "min(760px, 90vw)",
-                }}
-            >
-                <Search
-                    onHamburger={() => setSideOpen((v) => !v)}
-                />
+        <header className="header">
+            <div className="header-search">
+                <Search onHamburger={() => setSideOpen((v) => !v)} />
             </div>
 
-            {/* Popup side menu near top-left of search */}
             {sideOpen && (
-                <div
-                    ref={sideMenuRef}
-                    style={{
-                        position: "absolute",
-                        top: 70,
-                        left: 16,
-                        zIndex: 30,
-                    }}
-                >
+                <div ref={sideMenuRef} className="header-popup side">
                     <SideMenu
                         onClose={() => {
                             setSideOpen(false);
@@ -130,67 +91,31 @@ const Header = () => {
                 </div>
             )}
 
-            {/* Layer options popup */}
             {layerOpen && (
-                <div
-                    ref={layerRef}
-                    style={{
-                        position: "absolute",
-                        top: 104,
-                        left: 180,
-                        zIndex: 25,
-                    }}
-                >
+                <div ref={layerRef} className="header-popup layer">
                     <LayerOption onClose={() => setLayerOpen(false)} />
                 </div>
             )}
 
-            {/* Stations popup */}
             {stationOpen && (
-                <div
-                    ref={stationRef}
-                    style={{
-                        position: "absolute",
-                        top: 136,
-                        left: 180,
-                        zIndex: 25,
-                    }}
-                >
+                <div ref={stationRef} className="header-popup station">
                     <Station onClose={() => setStationOpen(false)} />
                 </div>
             )}
 
-            {/* Options popup */}
             {optionOpen && (
-                <div
-                    ref={optionRef}
-                    style={{
-                        position: "absolute",
-                        top: 170,
-                        left: 180,
-                        zIndex: 25,
-                    }}
-                >
+                <div ref={optionRef} className="header-popup option">
                     <Option onClose={() => setOptionOpen(false)} />
                 </div>
             )}
 
-            {/* À propos popup */}
             {aboutOpen && (
-                <div
-                    ref={aboutRef}
-                    style={{
-                        position: "absolute",
-                        top: 205,
-                        left: 180,
-                        zIndex: 25,
-                    }}
-                >
+                <div ref={aboutRef} className="header-popup about">
                     <About onClose={() => setAboutOpen(false)} />
                 </div>
             )}
         </header>
-    )
+    );
 };
 
 export default Header;
