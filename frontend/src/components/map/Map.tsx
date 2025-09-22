@@ -1,9 +1,7 @@
-"use client";
-
 import React, { useEffect, useState } from "react";
-import { MapContainer, TileLayer } from "react-leaflet";
-import ZoomControl from "../zoom/ZoomControl";
+import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
+import ZoomControl from "../zoom/ZoomControl";
 import { fetchProcessedStops } from "../../services/StopsApiCalls";
 
 const Map = () => {
@@ -40,7 +38,6 @@ const Map = () => {
             >
                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                 <ZoomControl />
-                {/* Custom stop marker here */}
             </MapContainer>
         </div>
     );
