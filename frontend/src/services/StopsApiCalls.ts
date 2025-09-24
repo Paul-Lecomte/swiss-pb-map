@@ -18,3 +18,9 @@ export const searchStopByName = async (name: string) => {
     });
     return response.data;
 };
+
+export async function fetchStopsInBbox(bbox: number[], zoom: number) {
+    const bboxStr = bbox.join(",");
+    const res = await fetch(`${API_BASE_URL}/stops/stops-in-bbox?bbox=${bboxStr}&zoom=${zoom}`);
+    return res.json();
+}
