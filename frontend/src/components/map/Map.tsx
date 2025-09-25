@@ -70,16 +70,25 @@ const Map = () => {
     }, []);
 
     function getStopIcon(routeDesc: string) {
+        console.log("log of the desc : " + routeDesc);
         switch (routeDesc) {
-            case 'M':
+            case 'M': // Metro
                 return createLeafletIcon(metroIcon);
-            case 'B':
+            case 'B': // Bus
                 return createLeafletIcon(busIcon);
-            case 'EV':
-            case 'S':
-            case 'SN':
+            case 'T': // Tram
+                return createLeafletIcon(tramIcon);
+            case 'S': // Regional train
+            case 'SN': // Night train
+            case 'R': // Regional
+            case 'EV': // Express / special
+            case 'TGV': // High-speed
                 return createLeafletIcon(trainIcon);
-            default:
+            case 'F': // Ferry / boat
+                return createLeafletIcon(ferryIcon);
+            case 'C': // Cable car / funicular / gondola
+                return createLeafletIcon(cableIcon);
+            default: // fallback
                 return createLeafletIcon(busIcon);
         }
     }
@@ -100,18 +109,28 @@ const Map = () => {
                 />
                 <ZoomControl />
                 <MapEvents />
-                {stops.map((stop: any, idx: number) => (
-                    <Marker
-                        key={idx}
-                        position={[
-                            stop.geometry.coordinates[1], // lat
-                            stop.geometry.coordinates[0], // lng
-                        ]}
-                        icon={getStopIcon(stop.properties.routeDesc)}
-                    >
-                        <Popup>{stop.properties.name}</Popup>
-                    </Marker>
-                ))}
+                {stops.map((stop: any, idx: number) => {
+                    const lat = stop.stop_lat ?? stop.geometry?.coordinates[1];
+                    const lon = stop.stop_lon ?? stop.geometry?.coordinates[0];
+                    const name = stop.stop_name ?? stop.properties?.stop_name;
+                    const routeDesc = stop.properties.routes?.[0]?.route_desc ?? "B";
+
+                    console.log("Stop:", name, "Routes:", stop.routes?.map((r: any) => r.route_desc));
+
+                    return (
+                        <Marker
+                            key={idx}
+                            position={[lat, lon]}
+                            icon={getStopIcon(routeDesc)}
+                        >
+                            <Popup>
+                                <strong>{name}</strong>
+                                <br />
+                                Routes: {stop.properties.routes?.map((r: any) => r.route_short_name).join(", ") ?? "N/A"}
+                            </Popup>
+                        </Marker>
+                    );
+                })}
             </MapContainer>
         </div>
     );
