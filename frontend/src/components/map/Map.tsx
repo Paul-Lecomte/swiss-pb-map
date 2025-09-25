@@ -8,6 +8,9 @@ import { fetchStopsInBbox } from "../../services/StopsApiCalls";
 const busIcon = '/icons/bus_marker.png';
 const metroIcon = '/icons/metro_marker.png';
 const trainIcon = '/icons/train_marker.png';
+const tramIcon = '/icons/tram_marker.png';
+const ferryIcon = '/icons/ferry_marker.png';
+const cableIcon = '/icons/cable_marker.png';
 
 const createLeafletIcon = (iconUrl: string) =>
     new L.Icon({
@@ -70,25 +73,49 @@ const Map = () => {
     }, []);
 
     function getStopIcon(routeDesc: string) {
-        switch (routeDesc) {
-            case 'M': // Metro
-                return createLeafletIcon(metroIcon);
-            case 'B': // Bus
-                return createLeafletIcon(busIcon);
-            case 'T': // Tram
-                return createLeafletIcon(tramIcon);
-            case 'S': // Regional train
-            case 'SN': // Night train
-            case 'R': // Regional
-            case 'EV': // Express / special
-            case 'TGV': // High-speed
-                return createLeafletIcon(trainIcon);
-            case 'F': // Ferry / boat
-                return createLeafletIcon(ferryIcon);
-            case 'C': // Cable car / funicular / gondola
-                return createLeafletIcon(cableIcon);
-            default: // fallback
-                return createLeafletIcon(busIcon);
+        const trainTypes = new Set([
+            'S', 'SN', 'EV', 'TGV',
+            'IC', 'IC1', 'IC2', 'IC3', 'IC5', 'IC6', 'IC8', 'IC21',
+            'IR', 'IR13', 'IR15', 'IR16', 'IR17', 'IR26', 'IR27', 'IR35', 'IR36', 'IR37', 'IR46', 'IR57', 'IR65', 'IR66', 'IR70',
+            'RE', 'RE33', 'RE37', 'RE48',
+            'S40', 'S41', 'EXT',
+            'EC', 'ICE', 'TGV Lyria', 'Thalys'
+        ]);
+
+        const tramTypes = new Set([
+            'Tram', 'T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'R'
+        ]);
+
+        const metroTypes = new Set([
+            'M'
+        ]);
+
+        const busTypes = new Set([
+            'Bus', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8'
+        ]);
+
+        const ferryTypes = new Set([
+            'Ferry', 'F1', 'F2', 'F3', '3100', 'N1', 'N2', '3150', 'BAT'
+        ]);
+
+        const cableTypes = new Set([
+            'Cable Car', 'Funicular', 'Gondola'
+        ]);
+
+        if (trainTypes.has(routeDesc)) {
+            return createLeafletIcon(trainIcon);
+        } else if (tramTypes.has(routeDesc)) {
+            return createLeafletIcon(tramIcon);
+        } else if (busTypes.has(routeDesc)) {
+            return createLeafletIcon(busIcon);
+        } else if (ferryTypes.has(routeDesc)) {
+            return createLeafletIcon(ferryIcon);
+        } else if (cableTypes.has(routeDesc)) {
+            return createLeafletIcon(cableIcon);
+        } else if (metroTypes.has(routeDesc)) {
+            return createLeafletIcon(metroIcon);
+        } else {
+            return createLeafletIcon(busIcon); // fallback
         }
     }
 
