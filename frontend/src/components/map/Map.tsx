@@ -4,10 +4,12 @@ import StopMarker from "@/components/stopmarker/StopMarker";
 import "leaflet/dist/leaflet.css";
 import ZoomControl from "../zoom/ZoomControl";
 import { fetchStopsInBbox } from "../../services/StopsApiCalls";
+import MapLayerSwitcher, { layers } from "../maplayerswitcher/MapLayerSwitcher";
 
 const Map = () => {
     const [stops, setStops] = useState([]);
     const [zoom, setZoom] = useState(13);
+    const [tileLayer, setTileLayer] = useState(layers[0]);
 
     const loadStops = async (bbox: number[], zoom: number, maxZoom: number) => {
         if (zoom === maxZoom) {
@@ -66,11 +68,8 @@ const Map = () => {
                 zoomControl={false}
                 style={{ position: "relative", width: "100%", height: "100%" }}
             >
-                <TileLayer
-                    url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> contributors &copy; <a href="https://carto.com/">CARTO</a>'
-                    subdomains={["a", "b", "c", "d"]}
-                />
+                <TileLayer url={tileLayer.url} attribution={tileLayer.attribution} />
+
                 <ZoomControl />
                 <MapEvents />
                 {stops
@@ -78,6 +77,11 @@ const Map = () => {
                     .map((stop: any, idx: number) => (
                         <StopMarker key={idx} stop={stop} />
                     ))}
+
+                <MapLayerSwitcher selectedLayer={tileLayer.name} onChange={(name) => {
+                    const layer = layers.find(l => l.name === name);
+                    if (layer) setTileLayer(layer);
+                }} />
             </MapContainer>
         </div>
     );
