@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from "react-leaflet";
-import L from "leaflet";
+import StopPopup from "../stoppopup/StopPopup";
 import "leaflet/dist/leaflet.css";
 import ZoomControl from "../zoom/ZoomControl";
 import { fetchStopsInBbox } from "../../services/StopsApiCalls";
@@ -74,7 +74,7 @@ const Map = () => {
 
     function getStopIcon(routeDesc: string) {
         const trainTypes = new Set([
-            'S', 'SN', 'EV', 'TGV',
+            'S', 'SN', 'R','TGV',
             'IC', 'IC1', 'IC2', 'IC3', 'IC5', 'IC6', 'IC8', 'IC21',
             'IR', 'IR13', 'IR15', 'IR16', 'IR17', 'IR26', 'IR27', 'IR35', 'IR36', 'IR37', 'IR46', 'IR57', 'IR65', 'IR66', 'IR70',
             'RE', 'RE33', 'RE37', 'RE48',
@@ -83,7 +83,7 @@ const Map = () => {
         ]);
 
         const tramTypes = new Set([
-            'Tram', 'T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'R'
+            'Tram', 'T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8',
         ]);
 
         const metroTypes = new Set([
@@ -119,6 +119,15 @@ const Map = () => {
         }
     }
 
+    function getRouteColor(route: string): string {
+        if (route.startsWith('S')) return '#0078D7';      // S-Bahn blue
+        if (route.startsWith('IC') || route.startsWith('IR')) return '#E63946'; // Intercity red
+        if (route.startsWith('RE')) return '#F4A261';    // RE orange
+        if (route.startsWith('T')) return '#2A9D8F';     // Tram green
+        if (route.startsWith('B')) return '#264653';     // Bus dark blue
+        return '#777'; // fallback gray
+    }
+
     return (
         <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", zIndex: 0 }}>
             <MapContainer
@@ -144,18 +153,20 @@ const Map = () => {
                         const routeDesc = stop.properties.routes[0].route_desc; // safe now
 
                         return (
-                            <Marker
-                                key={idx}
-                                position={[lat, lon]}
-                                icon={getStopIcon(routeDesc)}
-                            >
-                                <Popup>
-                                    <strong>{name}</strong>
-                                    <br />
-                                    Routes: {stop.properties.routes.map((r: any) => r.route_short_name).join(", ")}
-                                </Popup>
-                            </Marker>
-                        );
+                        <Marker
+                            key={idx}
+                            position={[lat, lon]}
+                            icon={getStopIcon(routeDesc)}
+                        >
+                            <Popup>
+                                <StopPopup
+                                    name={name}
+                                    routes={stop.properties.routes}
+                                    getRouteColor={getRouteColor}
+                                />
+                            </Popup>
+                        </Marker>
+                    );
                     })}
             </MapContainer>
         </div>
