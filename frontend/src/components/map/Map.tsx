@@ -70,7 +70,6 @@ const Map = () => {
     }, []);
 
     function getStopIcon(routeDesc: string) {
-        console.log("log of the desc : " + routeDesc);
         switch (routeDesc) {
             case 'M': // Metro
                 return createLeafletIcon(metroIcon);
@@ -114,8 +113,6 @@ const Map = () => {
                     const lon = stop.stop_lon ?? stop.geometry?.coordinates[0];
                     const name = stop.stop_name ?? stop.properties?.stop_name;
                     const routeDesc = stop.properties.routes?.[0]?.route_desc ?? "B";
-
-                    console.log("Stop:", name, "Routes:", stop.routes?.map((r: any) => r.route_desc));
 
                     return (
                         <Marker
