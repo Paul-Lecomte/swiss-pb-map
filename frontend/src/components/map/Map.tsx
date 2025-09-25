@@ -108,26 +108,28 @@ const Map = () => {
                 />
                 <ZoomControl />
                 <MapEvents />
-                {stops.map((stop: any, idx: number) => {
-                    const lat = stop.stop_lat ?? stop.geometry?.coordinates[1];
-                    const lon = stop.stop_lon ?? stop.geometry?.coordinates[0];
-                    const name = stop.stop_name ?? stop.properties?.stop_name;
-                    const routeDesc = stop.properties.routes?.[0]?.route_desc ?? "B";
+                {stops
+                    .filter((stop: any) => stop.properties.routes && stop.properties.routes.length > 0) // only stops with routes
+                    .map((stop: any, idx: number) => {
+                        const lat = stop.stop_lat ?? stop.geometry?.coordinates[1];
+                        const lon = stop.stop_lon ?? stop.geometry?.coordinates[0];
+                        const name = stop.stop_name ?? stop.properties?.stop_name;
+                        const routeDesc = stop.properties.routes[0].route_desc; // safe now
 
-                    return (
-                        <Marker
-                            key={idx}
-                            position={[lat, lon]}
-                            icon={getStopIcon(routeDesc)}
-                        >
-                            <Popup>
-                                <strong>{name}</strong>
-                                <br />
-                                Routes: {stop.properties.routes?.map((r: any) => r.route_short_name).join(", ") ?? "N/A"}
-                            </Popup>
-                        </Marker>
-                    );
-                })}
+                        return (
+                            <Marker
+                                key={idx}
+                                position={[lat, lon]}
+                                icon={getStopIcon(routeDesc)}
+                            >
+                                <Popup>
+                                    <strong>{name}</strong>
+                                    <br />
+                                    Routes: {stop.properties.routes.map((r: any) => r.route_short_name).join(", ")}
+                                </Popup>
+                            </Marker>
+                        );
+                    })}
             </MapContainer>
         </div>
     );
