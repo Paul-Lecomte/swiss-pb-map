@@ -13,8 +13,8 @@
 
 .custom-popup .popup-close-btn {
     position: absolute;
-    top: 8px;
-    right: 8px;
+    top: 0px;
+    right: 0px;
     background: #e63946;
     color: #fff;
     border: none;
@@ -33,6 +33,7 @@
     font-weight: bold;
     color: #0055a5;
     margin-bottom: 8px;
+    margin-top: 5px;
 }
 
 .custom-popup .popup-routes {

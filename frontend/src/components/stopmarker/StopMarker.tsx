@@ -17,7 +17,7 @@ const cableIcon = '/icons/cable_marker.png';
 const createLeafletIcon = (iconUrl: string) =>
     new L.Icon({
         iconUrl,
-        iconSize: [24, 24],
+        iconSize: [20, 20],
         iconAnchor: [16, 32],
         popupAnchor: [0, -32],
     });
