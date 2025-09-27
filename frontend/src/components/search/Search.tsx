@@ -1,11 +1,56 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
+import { searchProcessedStops } from "../../services/StopsApiCalls";
 import "./Search.css";
+
+type Stop = {
+    stop_id: string;
+    stop_name: string;
+    location_type?: string;
+    stop_lat?: number;
+    stop_lon?: number;
+};
 
 type Props = {
     onHamburger?: () => void;
+    onStopSelect?: (stop: Stop) => void;
 };
 
-export default function Search({ onHamburger }: Props) {
+const typeIcons: Record<string, string> = {
+    train: "🚆",
+    bus: "🚌",
+    metro: "🚇",
+    boat: "⛴️",
+};
+
+export default function Search({ onHamburger, onStopSelect }: Props) {
+    const [query, setQuery] = useState("");
+    const [suggestions, setSuggestions] = useState<Stop[]>([]);
+    const [type, setType] = useState<string>("");
+
+    useEffect(() => {
+        if (query.length === 0) {
+            setSuggestions([]);
+            return;
+        }
+        let cancelled = false;
+        searchProcessedStops(query, type)
+            .then(data => {
+                if (!cancelled) setSuggestions(data);
+            })
+            .catch(() => {});
+        return () => { cancelled = true; };
+    }, [query, type]);
+
+    const handleSelect = (stop: Stop) => {
+        console.log("Suggestion cliquée :", stop); // Ajout du log
+        setQuery("");
+        setSuggestions([]);
+        if (onStopSelect) onStopSelect(stop);
+        try {
+            window.dispatchEvent(new CustomEvent("app:stop-select", { detail: stop }));
+        } catch {}
+    };
+
     return (
         <div className="search-bar">
             <button
@@ -20,9 +65,23 @@ export default function Search({ onHamburger }: Props) {
                 </div>
             </button>
             <input
-                placeholder="Search for a station or line"
+                placeholder="search for a station"
                 className="search-input"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                autoComplete="off"
             />
+            <select
+                className="search-type-select"
+                value={type}
+                onChange={e => setType(e.target.value)}
+            >
+                <option value="">Tous</option>
+                <option value="train">Train</option>
+                <option value="bus">Bus</option>
+                <option value="metro">Métro</option>
+                <option value="boat">Bateau</option>
+            </select>
             <div className="search-magnifier">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="11" cy="11" r="8"></circle>
@@ -35,6 +94,25 @@ export default function Search({ onHamburger }: Props) {
                     <path d="M6 20c0-2.2 3.6-4 6-4s6 1.8 6 4"></path>
                 </svg>
             </button>
+            {suggestions.length > 0 && (
+                <ul className="search-suggestions">
+                    {suggestions.map(stop => (
+                        <li
+                            key={stop.stop_id}
+                            className="search-suggestion-item"
+                            onClick={() => handleSelect(stop)}
+                        >
+                            <span className="suggestion-icon">
+                                {typeIcons[stop.location_type ?? ""] ?? "📍"}
+                            </span>
+                            <span className="suggestion-name">{stop.stop_name}</span>
+                            {stop.location_type && (
+                                <span className="suggestion-type">{stop.location_type}</span>
+                            )}
+                        </li>
+                    ))}
+                </ul>
+            )}
         </div>
     );
 }

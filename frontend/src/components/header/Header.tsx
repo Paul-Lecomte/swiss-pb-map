@@ -1,7 +1,6 @@
 "use client";
 import React, { useRef } from 'react';
 import TransportInfo from "@/components/transport_info/TransportInfo";
-import Search from "../../components/search/Search";
 import SideMenu from "../../components/side_menu/SideMenu";
 import LayerOption from "../../components/layer_option/LayerOption";
 import Station from "../../components/station/Station";
@@ -9,8 +8,12 @@ import Option from "../../components/option/Option";
 import About from "../../components/about/About";
 import "./Header.css";
 
-const Header = () => {
-    const [sideOpen, setSideOpen] = React.useState(false);
+type Props = {
+    sideOpen: boolean;
+    setSideOpen: (open: boolean) => void;
+};
+
+const Header = ({ sideOpen, setSideOpen }: Props) => {
     const [layerOpen, setLayerOpen] = React.useState(false);
     const [stationOpen, setStationOpen] = React.useState(false);
     const [optionOpen, setOptionOpen] = React.useState(false);
@@ -45,14 +48,11 @@ const Header = () => {
         return () => {
             document.removeEventListener("mousedown", handleClickOutside);
         };
-    }, []);
+    }, [setSideOpen]);
 
     return (
         <header className="header">
-            <div className="header-search">
-                <Search onHamburger={() => setSideOpen((v) => !v)} />
-            </div>
-
+            {/* Pas de barre de recherche ici */}
             {sideOpen && (
                 <div ref={sideMenuRef} className="header-popup side">
                     <SideMenu

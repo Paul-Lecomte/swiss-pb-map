@@ -1,9 +1,7 @@
+// frontend/src/app/layout.tsx
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import Header from "../components/header/Header";
-import Footer from "../components/footer/Footer";
-import MapWrapper from "../components/map/MapWrapper";
 
 const geistSans = Geist({
     variable: "--font-geist-sans",
@@ -20,20 +18,11 @@ export const metadata: Metadata = {
     description: "Interactive map of public transport in Switzerland",
 };
 
-export default function RootLayout({
-                                       children,
-                                   }: Readonly<{
-    children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode; }>) {
     return (
         <html lang="en">
         <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <Header />
-        <main>
-            <MapWrapper />
-            {children}
-        </main>
-        <Footer />
+        {children}
         </body>
         </html>
     );

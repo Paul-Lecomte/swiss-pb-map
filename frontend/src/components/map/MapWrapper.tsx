@@ -5,8 +5,7 @@ import dynamic from "next/dynamic";
 
 const Map = dynamic(() => import("./Map"), { ssr: false });
 
-export default function MapWrapper() {
-
+export default function MapWrapper({ onHamburger }: { onHamburger: () => void }) {
     return (
         <div
             style={{
@@ -17,7 +16,7 @@ export default function MapWrapper() {
                 height: "100vh",
             }}
         >
-            <Map />
+            <Map onHamburger={onHamburger} />
         </div>
     );
 }

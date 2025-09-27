@@ -9,26 +9,30 @@ const layers = [
     {
         name: "Light",
         url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-        attribution: '&copy; CARTO & OSM',
-        thumbnail: "https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/6/32/21.png"
+        attribution: "&copy; CARTO & OSM",
+        thumbnail: "https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/6/32/21.png",
+        maxZoom: 20, // Carto basemaps support up to 20
     },
     {
         name: "Dark",
         url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-        attribution: '&copy; CARTO & OSM',
-        thumbnail: "https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/6/32/21.png"
+        attribution: "&copy; CARTO & OSM",
+        thumbnail: "https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/6/32/21.png",
+        maxZoom: 20,
     },
     {
         name: "Streets",
         url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-        attribution: '&copy; OSM',
-        thumbnail: "https://tile.openstreetmap.org/6/32/21.png"
+        attribution: "&copy; OSM",
+        thumbnail: "https://tile.openstreetmap.org/6/32/21.png",
+        maxZoom: 19, // OSM standard supports up to 19
     },
     {
         name: "Satellite",
         url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        attribution: '© ESRI',
-        thumbnail: "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/6/21/32"
+        attribution: "© ESRI",
+        thumbnail: "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/6/21/32",
+        maxZoom: 17, // ESRI World Imagery supports up to 17
     },
 ];
 
