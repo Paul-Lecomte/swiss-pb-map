@@ -43,7 +43,24 @@ const getStopsInBbox = asyncHandler(async (req, res) => {
     });
 });
 
+
+const searchProcessedStops = asyncHandler(async (req, res) => {
+    const { q, type } = req.query;
+    if (!q) return res.status(400).json({ error: "Research parameter not found" });
+
+    const query = {
+        stop_name: { $regex: q, $options: 'i' }
+    };
+    if (type) {
+        query.location_type = type; // filter by type if provided
+    }
+
+    const stops = await ProcessedStop.find(query).limit(10);
+    res.json(stops);
+});
+
 module.exports = {
     getAllStops,
-    getStopsInBbox
+    getStopsInBbox,
+    searchProcessedStops
 };
