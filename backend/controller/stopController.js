@@ -48,15 +48,21 @@ const searchProcessedStops = asyncHandler(async (req, res) => {
     const { q, type } = req.query;
     if (!q) return res.status(400).json({ error: "Research parameter not found" });
 
-    const query = {
-        stop_name: { $regex: q, $options: 'i' }
-    };
-    if (type) {
-        query.location_type = type; // filter by type if provided
-    }
+    const query = { stop_name: { $regex: q, $options: 'i' } };
+    if (type) query.location_type = type;
 
     const stops = await ProcessedStop.find(query).limit(10);
-    res.json(stops);
+    res.json(
+        stops.map(stop => ({
+            stop_id: stop.stop_id,
+            stop_name: stop.stop_name,
+            stop_lat: stop.stop_lat,
+            stop_lon: stop.stop_lon,
+            location_type: stop.location_type,
+            parent_station: stop.parent_station,
+            routes: stop.routes || []
+        }))
+    );
 });
 
 module.exports = {
