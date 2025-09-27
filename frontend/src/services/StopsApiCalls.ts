@@ -24,3 +24,10 @@ export async function fetchStopsInBbox(bbox: number[], zoom: number) {
     const res = await fetch(`${API_BASE_URL}/stops/stops-in-bbox?bbox=${bboxStr}&zoom=${zoom}`);
     return res.json();
 }
+
+export const searchProcessedStops = async (q: string, type?: string) => {
+    const params: any = { q };
+    if (type) params.type = type;
+    const response = await axios.get(`${API_BASE_URL}/stops/search-stops`, { params });
+    return response.data;
+};
