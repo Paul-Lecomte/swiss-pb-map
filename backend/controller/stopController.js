@@ -11,6 +11,8 @@ const getAllStops = asyncHandler(async (req, res) => {
     }
 });
 
+// get the stops in a bounding box
+// bbox = "minLng,minLat,maxLng,maxLat"
 const getStopsInBbox = asyncHandler(async (req, res) => {
     const { bbox, zoom } = req.query; // bbox = "minLng,minLat,maxLng,maxLat"
     if (!bbox) return res.status(400).json({ error: "bbox manquant" });
