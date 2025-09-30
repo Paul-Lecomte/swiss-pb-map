@@ -43,3 +43,7 @@
 # typescript
 /frontend*.tsbuildinfo
 /frontendnext-env.d.ts
+
+
+# random things
+/frontend/public/random
