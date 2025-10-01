@@ -21,6 +21,7 @@ const Stop = require('../model/stopsModel');
 const Transfer = require('../model/transfersModel');
 const Trip = require('../model/tripsModel');
 const ProcessedStop = require('../model/processedStopsModel');
+const ProcessedRoute = require('../model/processedRoutesModel');
 
 const pipeline = promisify(stream.pipeline);
 const DATA_DIR = path.join(__dirname, 'gtfs_data');
@@ -87,6 +88,86 @@ async function populateProcessedStops() {
     }
 
     console.log(`Finished. Total ProcessedStop records inserted: ${processedCount}`);
+}
+
+async function populateProcessedRoutes(routesBatch, batchNumber) {
+    console.log(`Processing batch ${batchNumber} with ${routesBatch.length} routes...`);
+
+    const routeIds = routesBatch.map(r => r.route_id);
+
+    // Fetch trips for these routes
+    const trips = await Trip.find({ route_id: { $in: routeIds } });
+    const stopTimes = await StopTime.find({ trip_id: { $in: trips.map(t => t.trip_id) } });
+    const stops = await Stop.find({}); // you can optimize by only fetching stops you need
+
+    const stopMap = new Map(stops.map(s => [s.stop_id, s]));
+    const stopTimesByTrip = new Map();
+
+    for (const st of stopTimes) {
+        if (!stopTimesByTrip.has(st.trip_id)) stopTimesByTrip.set(st.trip_id, []);
+        stopTimesByTrip.get(st.trip_id).push(st);
+    }
+
+    for (const [tripId, sts] of stopTimesByTrip.entries()) {
+        sts.sort((a, b) => a.stop_sequence - b.stop_sequence);
+    }
+
+    const tripsByRoute = new Map();
+    for (const trip of trips) {
+        if (!tripsByRoute.has(trip.route_id)) tripsByRoute.set(trip.route_id, []);
+        tripsByRoute.get(trip.route_id).push(trip);
+    }
+
+    const processedRoutes = [];
+
+    for (const route of routesBatch) {
+        const routeTrips = tripsByRoute.get(route.route_id) || [];
+
+        const processedTrips = routeTrips.map(trip => ({
+            trip_id: trip.trip_id,
+            trip_headsign: trip.trip_headsign,
+            trip_short_name: trip.trip_short_name,
+            direction_id: trip.direction_id,
+            service_id: trip.service_id,
+            stop_times: (stopTimesByTrip.get(trip.trip_id) || []).map(st => ({
+                stop_id: st.stop_id,
+                stop_sequence: st.stop_sequence,
+                arrival_time: st.arrival_time,
+                departure_time: st.departure_time,
+            }))
+        }));
+
+        // Use the first trip as "representative" for ordered stops
+        const representativeTrip = processedTrips[0];
+        const stopsList = representativeTrip
+            ? representativeTrip.stop_times.map(st => {
+                const s = stopMap.get(st.stop_id);
+                return {
+                    stop_id: s?.stop_id,
+                    stop_name: s?.stop_name,
+                    stop_lat: s?.stop_lat,
+                    stop_lon: s?.stop_lon,
+                    stop_sequence: st.stop_sequence,
+                };
+            })
+            : [];
+
+        processedRoutes.push({
+            route_id: route.route_id,
+            agency_id: route.agency_id,
+            route_short_name: route.route_short_name,
+            route_long_name: route.route_long_name,
+            route_type: route.route_type,
+            route_desc: route.route_desc,
+            route_color: route.route_color,
+            route_text_color: route.route_text_color,
+            stops: stopsList,
+            trips: processedTrips,
+        });
+    }
+
+    await saveGTFSData(ProcessedRoute, processedRoutes, 'ProcessedRoute');
+    console.log(`Inserted batch ${batchNumber} (${processedRoutes.length} ProcessedRoute docs)`);
 }
 
 // Function to process stops with trip and route data
@@ -272,6 +353,7 @@ async function updateGTFSData() {
             }
         }
         await populateProcessedStops();
+        await populateProcessedRoutes();
         fs.rmSync(DATA_DIR, { recursive: true, force: true });
 
         console.log('GTFS data update completed.');
