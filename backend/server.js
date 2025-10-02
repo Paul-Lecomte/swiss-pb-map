@@ -26,6 +26,7 @@ app.use(morgan('dev'));
 app.use('/api/gtfs', require('./route/tripRoute'));
 app.use('/api/fastest_path', require('./route/fastestRoute'));
 app.use('/api/stops', require('./route/stopRoute'));
+app.use('/api/routes', require('./route/routeRoute'));
 console.log('Routes loaded');
 
 app.get('/', (req, res) => {
