@@ -27,6 +27,19 @@ const processedRouteSchema = new mongoose.Schema({
         max_lat: Number,
         min_lon: Number,
         max_lon: Number
+    },
+
+    // Geometry of the route (LineString coordinates)
+    geometry: {
+        type: {
+            type: String,
+            enum: ['LineString'],
+            default: 'LineString'
+        },
+        coordinates: {
+            type: [[Number]], // array of [lon, lat]
+            default: []
+        }
     }
 });
 
