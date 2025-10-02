@@ -1,3 +1,21 @@
+/**
+ * Commands to update GTFS collections:
+ *
+ * 1. Update all GTFS collections (agency, calendar, stops, etc.) + ProcessedStops:
+ *    node backend/utils/gtfsDataUpdater.js
+ *
+ * 2. Update only stops:
+ *    node backend/utils/gtfsDataUpdater.js --stops
+ *
+ * 3. Update ProcessedStops (reload required collections and build ProcessedStops):
+ *    node backend/utils/gtfsDataUpdater.js --processedstops
+ *
+ * 4. Update ProcessedRoute (optimized pipeline, does not touch base collections):
+ *    node backend/utils/gtfsDataUpdater.js --processedroutes
+ *
+ * Run these commands in the terminal at the project root.
+ */
+
 require('dotenv').config();
 const fs = require('fs');
 const axios = require('axios');
