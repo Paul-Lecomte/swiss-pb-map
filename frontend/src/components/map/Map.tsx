@@ -6,6 +6,8 @@ import "leaflet/dist/leaflet.css";
 import ZoomControl from "../zoom/ZoomControl";
 import { fetchStopsInBbox } from "../../services/StopsApiCalls";
 import MapLayerSwitcher, { layers } from "../maplayerswitcher/MapLayerSwitcher";
+import { fetchRoutesInBbox } from "../../services/RouteApiCalls";
+import RouteLine from "@/components//route_line/RouteLine";
 import Search from "@/components/search/Search";
 import L from "leaflet";
 
@@ -16,6 +18,7 @@ const Map = ({ onHamburger }: { onHamburger: () => void }) => {
     const [pendingStopId, setPendingStopId] = useState<string | null>(null);
     const [mapReady, setMapReady] = useState(false);
     const [pendingCenter, setPendingCenter] = useState<{ lat: number; lon: number; zoom?: number } | null>(null);
+    const [routes, setRoutes] = useState<any[]>([]);
     const mapRef = useRef<L.Map | null>(null);
 
     const loadStops = async (bbox: number[], zoom: number, maxZoom: number) => {
@@ -25,6 +28,11 @@ const Map = ({ onHamburger }: { onHamburger: () => void }) => {
         } else {
             setStops([]);
         }
+    };
+
+    const loadRoutes = async (bbox: number[], zoom: number) => {
+        const data = await fetchRoutesInBbox(bbox, zoom);
+        setRoutes(data.features || []);
     };
 
     function MapRefBinder() {
@@ -54,6 +62,7 @@ const Map = ({ onHamburger }: { onHamburger: () => void }) => {
                 const maxZoom = map.getMaxZoom();
                 setZoom(currentZoom);
                 loadStops(bbox, currentZoom, maxZoom);
+                loadRoutes(bbox, currentZoom);
             },
             zoomend: (e) => {
                 const map = e.target;
@@ -68,6 +77,7 @@ const Map = ({ onHamburger }: { onHamburger: () => void }) => {
                 const maxZoom = map.getMaxZoom();
                 setZoom(currentZoom);
                 loadStops(bbox, currentZoom, maxZoom);
+                loadRoutes(bbox, currentZoom);
             }
         });
         return null;
@@ -76,6 +86,7 @@ const Map = ({ onHamburger }: { onHamburger: () => void }) => {
     useEffect(() => {
         const bbox = [6.5, 46.5, 6.7, 46.6];
         loadStops(bbox, 13, 17);
+        loadRoutes(bbox, 13);
     }, []);
 
     // Handler for "app:stop-select" event
@@ -240,6 +251,11 @@ const Map = ({ onHamburger }: { onHamburger: () => void }) => {
                 <ZoomControl />
                 <MapRefBinder />
                 <MapEvents />
+
+                {routes.map((route: any, idx: number) => (
+                    <RouteLine key={idx} route={route} />
+                ))}
+
                 {stops
                     // Keep normal filter but allow pending stop even without routes
                     .filter((stop: any) =>
