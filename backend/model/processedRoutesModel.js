@@ -13,34 +13,21 @@ const processedRouteSchema = new mongoose.Schema({
     // Ordered list of stops for this route
     stops: [
         {
-            stop_id: String,
+            stop_id: { type: String, required: true },
             stop_name: String,
             stop_lat: Number,
             stop_lon: Number,
-            stop_sequence: Number,
+            stop_sequence: Number
         }
     ],
 
-    // Precomputed trip data for faster access
-    trips: [
-        {
-            trip_id: String,
-            trip_headsign: String,
-            trip_short_name: String,
-            direction_id: Number,
-            service_id: String, // link to calendar (weekday, weekend, etc.)
-
-            // Compressed stop_times for this trip
-            stop_times: [
-                {
-                    stop_id: String,
-                    stop_sequence: Number,
-                    arrival_time: String,   // HH:MM:SS GTFS format
-                    departure_time: String, // HH:MM:SS GTFS format
-                }
-            ]
-        }
-    ]
+    // Bounds of the route (min/max lat/lon) for frontend display
+    bounds: {
+        min_lat: Number,
+        max_lat: Number,
+        min_lon: Number,
+        max_lon: Number
+    }
 });
 
 module.exports = mongoose.model("ProcessedRoute", processedRouteSchema);
