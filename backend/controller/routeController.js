@@ -19,10 +19,7 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
         type: "FeatureCollection",
         features: routes.map(route => ({
             type: "Feature",
-            geometry: {
-                type: "LineString",
-                coordinates: route.stops.map(stop => [stop.stop_lon, stop.stop_lat])
-            },
+            geometry: route.geometry,
             properties: {
                 route_id: route.route_id,
                 route_short_name: route.route_short_name,

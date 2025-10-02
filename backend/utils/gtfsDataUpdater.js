@@ -27,6 +27,7 @@ const stream = require('stream');
 const cheerio = require('cheerio');
 const mongoose = require('mongoose');
 const connectDB = require('../config/dbConnection');
+const { getRouteBetweenStops } = require('./routingHelper');
 
 // Import models
 const Agency = require('../model/agencyModel');
@@ -96,6 +97,21 @@ async function extractGTFS() {
         });
     }));
     console.log('GTFS data extracted successfully');
+}
+
+async function buildRouteGeometry(orderedStops) {
+    if (!orderedStops || orderedStops.length < 2) return [];
+
+    let coords = [];
+    for (let i = 0; i < orderedStops.length - 1; i++) {
+        const segmentCoords = await getRouteBetweenStops(orderedStops[i], orderedStops[i + 1], 'driving');
+        if (i > 0) {
+            // éviter de dupliquer le point de jonction
+            segmentCoords.shift();
+        }
+        coords = coords.concat(segmentCoords);
+    }
+    return coords;
 }
 
 // -------------------------
@@ -397,26 +413,21 @@ async function populateProcessedRoutesFromFiles() {
     await ProcessedRoute.deleteMany({});
     console.log('Cleared ProcessedRoute collection.');
 
-    // 1) read routes and trips into arrays (they are usually small enough)
     const routes = await parseCSV('routes.txt', Route, 'Route', { saveToDB: false });
     const trips = await parseCSV('trips.txt', Trip, 'Trip', { saveToDB: false });
 
-    // Build trips grouped by route_id
-    const tripGroups = new Map(); // route_id -> [trip objects]
-    const tripById = new Map(); // trip_id -> trip object
+    const tripGroups = new Map();
+    const tripById = new Map();
     for (const t of trips) {
         if (!tripGroups.has(t.route_id)) tripGroups.set(t.route_id, []);
         tripGroups.get(t.route_id).push(t);
         tripById.set(t.trip_id, t);
     }
 
-    // 2) First streaming pass over stop_times: count per trip
     const counts = await countStopTimesPerTrip('stop_times.txt');
 
-    // 3) Determine mainTrip (trip_id with most stop_times) for each route
-    const mainTripForRoute = new Map(); // route_id -> trip_id
+    const mainTripForRoute = new Map();
     const mainTripIds = new Set();
-
     for (const route of routes) {
         const tripsForRoute = tripGroups.get(route.route_id) || [];
         let bestTripId = null;
@@ -434,22 +445,17 @@ async function populateProcessedRoutesFromFiles() {
         }
     }
 
-    // 4) Second streaming pass: collect stop_times only for mainTripIds
     const stopTimesMap = await collectStopTimesForTripIds('stop_times.txt', mainTripIds);
-    // stopTimesMap: trip_id -> [stop_time rows]
-
-    // 5) Build stop map (streaming)
     const stopMap = await buildStopMap('stops.txt');
 
-    // 6) Build ProcessedRoute documents in batches
-    const batchSize = 200;
+    const batchSize = 50; // ajustable batchsize
     let batch = [];
     let insertedCount = 0;
     let routeIndex = 0;
 
     for (const route of routes) {
         routeIndex++;
-        if (routeIndex % 50 === 0 || routeIndex === 1) {
+        if (routeIndex % 10 === 0 || routeIndex === 1) {
             console.log(`Building route ${routeIndex}/${routes.length} (route_id=${route.route_id})`);
         }
 
@@ -458,30 +464,33 @@ async function populateProcessedRoutesFromFiles() {
 
         if (mainTripId) {
             const stList = stopTimesMap.get(mainTripId) || [];
-            // sort by stop_sequence numeric
-            stList.sort((a, b) => (parseInt(a.stop_sequence || '0') - parseInt(b.stop_sequence || '0')));
-
+            stList.sort((a, b) => parseInt(a.stop_sequence || '0') - parseInt(b.stop_sequence || '0'));
             orderedStops = stList.map(st => {
                 const stop = stopMap.get(st.stop_id);
                 if (!stop) return null;
                 return {
                     stop_id: stop.stop_id,
                     stop_name: stop.stop_name,
-                    stop_lat: stop.stop_lat,
-                    stop_lon: stop.stop_lon,
+                    stop_lat: parseFloat(stop.stop_lat),
+                    stop_lon: parseFloat(stop.stop_lon),
                     stop_sequence: parseInt(st.stop_sequence || '0')
                 };
             }).filter(Boolean);
         }
 
-        const lats = orderedStops.map(s => parseFloat(s.stop_lat));
-        const lons = orderedStops.map(s => parseFloat(s.stop_lon));
+        const lats = orderedStops.map(s => s.stop_lat);
+        const lons = orderedStops.map(s => s.stop_lon);
         const bounds = (lats.length && lons.length) ? {
             min_lat: Math.min(...lats),
             max_lat: Math.max(...lats),
             min_lon: Math.min(...lons),
             max_lon: Math.max(...lons)
         } : null;
+
+        let geometryCoords = [];
+        if (orderedStops.length >= 2) {
+            geometryCoords = await buildRouteGeometry(orderedStops);
+        }
 
         const processedRoute = {
             route_id: route.route_id,
@@ -493,7 +502,11 @@ async function populateProcessedRoutesFromFiles() {
             route_color: route.route_color,
             route_text_color: route.route_text_color,
             stops: orderedStops,
-            bounds
+            bounds,
+            geometry: {
+                type: "LineString",
+                coordinates: geometryCoords.length ? geometryCoords : orderedStops.map(s => [s.stop_lon, s.stop_lat])
+            }
         };
 
         batch.push(processedRoute);
