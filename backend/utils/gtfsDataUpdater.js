@@ -27,7 +27,7 @@ const stream = require('stream');
 const cheerio = require('cheerio');
 const mongoose = require('mongoose');
 const connectDB = require('../config/dbConnection');
-const { getRouteBetweenStops } = require('./routingHelper');
+const { buildRouteGeometry, mapRouteTypeToProfile } = require('./routingHelper');
 
 // Import models
 const Agency = require('../model/agencyModel');
@@ -97,21 +97,6 @@ async function extractGTFS() {
         });
     }));
     console.log('GTFS data extracted successfully');
-}
-
-async function buildRouteGeometry(orderedStops) {
-    if (!orderedStops || orderedStops.length < 2) return [];
-
-    let coords = [];
-    for (let i = 0; i < orderedStops.length - 1; i++) {
-        const segmentCoords = await getRouteBetweenStops(orderedStops[i], orderedStops[i + 1], 'driving');
-        if (i > 0) {
-            // éviter de dupliquer le point de jonction
-            segmentCoords.shift();
-        }
-        coords = coords.concat(segmentCoords);
-    }
-    return coords;
 }
 
 // -------------------------
@@ -448,7 +433,7 @@ async function populateProcessedRoutesFromFiles() {
     const stopTimesMap = await collectStopTimesForTripIds('stop_times.txt', mainTripIds);
     const stopMap = await buildStopMap('stops.txt');
 
-    const batchSize = 50; // ajustable batchsize
+    const batchSize = 50;
     let batch = [];
     let insertedCount = 0;
     let routeIndex = 0;
@@ -489,7 +474,8 @@ async function populateProcessedRoutesFromFiles() {
 
         let geometryCoords = [];
         if (orderedStops.length >= 2) {
-            geometryCoords = await buildRouteGeometry(orderedStops);
+            // ✅ on passe le route_type au helper
+            geometryCoords = await buildRouteGeometry(orderedStops, route.route_type);
         }
 
         const processedRoute = {
