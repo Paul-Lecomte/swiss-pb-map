@@ -99,6 +99,15 @@ async function extractGTFS() {
     console.log('GTFS data extracted successfully');
 }
 
+async function getRouteColor(routeShortName) {
+    if (routeShortName.startsWith('S')) return '#0078D7';
+    if (routeShortName.startsWith('IC') || routeShortName.startsWith('IR')) return '#E63946';
+    if (routeShortName.startsWith('RE')) return '#F4A261';
+    if (routeShortName.startsWith('T')) return '#2A9D8F';
+    if (routeShortName.startsWith('B')) return '#264653';
+    return '#777';
+}
+
 // -------------------------
 // Generic CSV parse (DB mode and small-return mode)
 // -------------------------
@@ -485,7 +494,7 @@ async function populateProcessedRoutesFromFiles() {
             route_long_name: route.route_long_name,
             route_type: route.route_type,
             route_desc: route.route_desc,
-            route_color: route.route_color,
+            route_color: route.route_color || getRouteColor(route.route_short_name),
             route_text_color: route.route_text_color,
             stops: orderedStops,
             bounds,
