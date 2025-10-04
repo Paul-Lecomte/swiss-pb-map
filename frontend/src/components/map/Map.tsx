@@ -253,7 +253,11 @@ const Map = ({ onHamburger }: { onHamburger: () => void }) => {
                 <MapEvents />
 
                 {routes.map((route: any, idx: number) => (
-                    <RouteLine key={idx} route={route} />
+                    <RouteLine
+                        key={idx}
+                        route={route}
+                        color={route.properties?.route_color}
+                    />
                 ))}
 
                 {stops
