@@ -494,7 +494,7 @@ async function populateProcessedRoutesFromFiles() {
             route_long_name: route.route_long_name,
             route_type: route.route_type,
             route_desc: route.route_desc,
-            route_color: route.route_color || getRouteColor(route.route_short_name),
+            route_color: route.route_color || await getRouteColor(route.route_short_name),
             route_text_color: route.route_text_color,
             stops: orderedStops,
             bounds,
