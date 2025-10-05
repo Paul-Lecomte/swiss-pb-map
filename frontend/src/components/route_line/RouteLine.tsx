@@ -1,3 +1,4 @@
+// TODO: add popup with stops and more info on the route
 import React from "react";
 import { Polyline } from "react-leaflet";
 
