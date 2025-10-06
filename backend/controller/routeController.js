@@ -28,7 +28,8 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
                 route_desc: route.route_desc,
                 bounds: route.bounds,
                 route_color: route.route_color,
-                route_text_color: route.route_text_color
+                route_text_color: route.route_text_color,
+                stops: route.stops
             }
         }))
     });
