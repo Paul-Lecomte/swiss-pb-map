@@ -9,6 +9,7 @@ import MapLayerSwitcher, { layers } from "../maplayerswitcher/MapLayerSwitcher";
 import { fetchRoutesInBbox } from "../../services/RouteApiCalls";
 import RouteLine from "@/components//route_line/RouteLine";
 import Search from "@/components/search/Search";
+import RouteInfoPanel from "@/components/routeinfopanel/RouteInfoPanel";
 import L from "leaflet";
 
 const Map = ({ onHamburger }: { onHamburger: () => void }) => {
@@ -20,6 +21,8 @@ const Map = ({ onHamburger }: { onHamburger: () => void }) => {
     const [pendingCenter, setPendingCenter] = useState<{ lat: number; lon: number; zoom?: number } | null>(null);
     const [routes, setRoutes] = useState<any[]>([]);
     const mapRef = useRef<L.Map | null>(null);
+    const [selectedRoute, setSelectedRoute] = useState<any | null>(null);
+    const handleCloseRoutePanel = () => setSelectedRoute(null);
 
     const loadStops = async (bbox: number[], zoom: number, maxZoom: number) => {
         if (zoom === maxZoom) {
@@ -257,8 +260,16 @@ const Map = ({ onHamburger }: { onHamburger: () => void }) => {
                         key={idx}
                         route={route}
                         color={route.properties?.route_color}
+                        onClick={() => setSelectedRoute(route)}
                     />
                 ))}
+
+                {selectedRoute && (
+                    <RouteInfoPanel
+                        route={selectedRoute}
+                        onClose={handleCloseRoutePanel}
+                    />
+                )}
 
                 {stops
                     // Keep normal filter but allow pending stop even without routes
