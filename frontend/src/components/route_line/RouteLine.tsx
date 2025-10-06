@@ -1,13 +1,13 @@
-// TODO: add popup with stops and more info on the route
 import React from "react";
-import { Polyline } from "react-leaflet";
+import { Polyline, useMap } from "react-leaflet";
 
 interface RouteLineProps {
     route: any;
     color?: string;
+    onClick?: () => void;
 }
 
-const RouteLine: React.FC<RouteLineProps> = ({ route, color = "#0074D9" }) => {
+const RouteLine: React.FC<RouteLineProps> = ({ route, color = "#0074D9", onClick }) => {
     const positions = route.geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]]);
     const routeColor = route.route_color || color;
 
@@ -16,9 +16,12 @@ const RouteLine: React.FC<RouteLineProps> = ({ route, color = "#0074D9" }) => {
             positions={positions}
             pathOptions={{
                 color: routeColor,
-                weight: 4, // plus fin
+                weight: 4,
                 opacity: 0.92,
                 lineCap: "round",
+            }}
+            eventHandlers={{
+                click: () => { if (onClick) onClick(); }
             }}
         />
     );
