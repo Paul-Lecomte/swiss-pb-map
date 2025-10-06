@@ -133,8 +133,8 @@ SwissTransitMap/
 │       │   │   └── SideMenu.tsx    # Side menu
 │       │   ├── station/
 │       │   │   └── Station.tsx     # Station display
-│       │   ├── transport_info/
-│       │   │   └── TransportInfo.tsx # Transport information
+│       │   ├── routeinfopanel/
+│       │   │   └── RouteInfoPanel.tsx # Transport information
 │       │   └── zoom/
 │       │       ├── ZoomControl.css # Zoom control styles
 │       │       └── ZoomControl.tsx # Map zoom control
