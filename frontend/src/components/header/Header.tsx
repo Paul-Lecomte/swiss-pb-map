@@ -1,6 +1,5 @@
 "use client";
 import React, { useRef } from 'react';
-import TransportInfo from "@/components/transport_info/TransportInfo";
 import SideMenu from "../../components/side_menu/SideMenu";
 import LayerOption from "../../components/layer_option/LayerOption";
 import Station from "../../components/station/Station";
