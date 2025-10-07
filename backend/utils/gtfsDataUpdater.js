@@ -100,11 +100,59 @@ async function extractGTFS() {
 }
 
 async function getRouteColor(routeShortName) {
-    if (routeShortName.startsWith('S')) return '#0078D7';
-    if (routeShortName.startsWith('IC') || routeShortName.startsWith('IR')) return '#E63946';
-    if (routeShortName.startsWith('RE')) return '#F4A261';
-    if (routeShortName.startsWith('T')) return '#2A9D8F';
-    if (routeShortName.startsWith('B')) return '#264653';
+    if (!routeShortName) return '#777';
+    const name = routeShortName.toUpperCase().trim();
+
+    // Mainline & Regional Trains (SBB & Regionalbahnen)
+    if (/^ICN\b/.test(name)) return '#C9202C'; // InterCity Tilting (ICN)
+    if (/^IC\b/.test(name))  return '#E63946'; // InterCity
+    if (/^IR\b/.test(name))  return '#F3722C'; // InterRegio
+    if (/^RE\b/.test(name))  return '#F4A261'; // RegioExpress
+    if (/^R\d|\bREGIO\b|^R\b/.test(name)) return '#E9C46A'; // Regio
+    if (/^S\d|\bS-?BAHN\b|\bS\b/.test(name)) return '#0078D7'; // S-Bahn / commuter rail
+    if (/^SN/.test(name)) return '#4361EE'; // Night S-Bahn
+
+    // International Trains
+    if (/^EC\b/.test(name))   return '#9B2226';  // EuroCity
+    if (/^EN\b/.test(name))   return '#BB3E03';  // EuroNight
+    if (/^ICE\b/.test(name))  return '#457B9D'; // ICE (Germany)
+    if (/^(TGV|LYR|LYRIA)\b/.test(name)) return '#C1121F'; // TGV / Lyria
+    if (/^RJX?\b/.test(name)) return '#E76F51'; // Railjet / Railjet Express
+    if (/^NJ\b/.test(name))   return '#6A040F';  // NightJet
+    if (/^PE\b/.test(name))   return '#4CC9F0';  // Panorama Express
+    if (/^IN\b/.test(name))   return '#7209B7';  // InterCity Night
+    if (/^RB\b/.test(name))   return '#E9C46A';  // Regionalbahn
+
+    // Urban Public Transport
+    if (/^T\d|\bTRAM\b/.test(name)) return '#2A9D8F'; // Tram / streetcar
+    if (/^M\d|\bMETRO\b/.test(name)) return '#00B4D8'; // Metro
+    if (/^U\d|\bU-?BAHN\b/.test(name)) return '#00B4D8'; // Metro / underground
+    if (/^G\d|\bTROLLEY\b|\bTROLLEYBUS\b/.test(name)) return '#118AB2'; // Trolleybus
+    if (/^B\d|\bBUS\b/.test(name)) return '#264653'; // Bus
+    if (/^E\d|EXP|EXPRESS\b/.test(name)) return '#90BE6D'; // Express bus
+    if (/^P\d|\bPOSTAUTO\b|\bPOSTBUS\b/.test(name)) return '#FFD100'; // PostBus (yellow)
+    if (/^NB|\bNIGHT\b/.test(name)) return '#6D597A'; // Night Bus
+    if (/^CAR|CAX/.test(name)) return '#8D99AE'; // Long-distance / intercity coach
+
+    //  Boats & Ferries
+    if (/^MS\d|\bMS\b|\bSHIP\b|\bBOAT\b|\bFERRY\b|\bSGV\b|\bBAT\b/.test(name)) return '#3A86FF';
+
+    // Mountain Transports (Cable cars, funiculars, lifts)
+    if (/^L|F/.test(name)) return '#8338EC'; // Lift / funicular
+    if (/^CC|SL/.test(name)) return '#9D4EDD'; // Cable car / ski lift
+    if (/^ASC/.test(name)) return '#7209B7'; // Elevator (ascenseur)
+    if (/\b(FUNI|FUNIC|SEIL|BAHN|ZAHNRAD|GGB|MGB|RHB|STATION)\b/.test(name)) return '#8338EC'; // mountain railways
+
+    //  Tourist / Scenic / Misc
+    if (/^PE\b|PANORAMA|GLACIER|BERNINA|GOLDENPASS|GEX|GOTTHARD|GPX/.test(name)) return '#B5703A'; // Panorama / tourist
+    if (/^D/.test(name)) return '#FFBA08';    // Dotto / tourist train
+    if (/^Z/.test(name)) return '#F8961E';    // Zahnradbahn (rack railway)
+
+    // Fallback heuristics
+    if (/^\d+$/.test(name)) return '#264653';          // numeric-only -> likely bus/regio
+    if (/^[A-Z]{1,3}\d*$/.test(name)) return '#0078D7'; // short alpha -> S / regional default
+
+    // Default unknown
     return '#777';
 }
 

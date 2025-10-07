@@ -16,8 +16,8 @@ const RouteLine: React.FC<RouteLineProps> = ({ route, color = "#0074D9", onClick
             positions={positions}
             pathOptions={{
                 color: routeColor,
-                weight: 4,
-                opacity: 0.92,
+                weight: 1,
+                opacity: 0.80,
                 lineCap: "round",
             }}
             eventHandlers={{
