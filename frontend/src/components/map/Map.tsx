@@ -12,7 +12,7 @@ import Search from "@/components/search/Search";
 import RouteInfoPanel from "@/components/routeinfopanel/RouteInfoPanel";
 import L from "leaflet";
 
-const Map = ({ onHamburger }: { onHamburger: () => void }) => {
+const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
     const [stops, setStops] = useState<any[]>([]);
     const [zoom, setZoom] = useState(13);
     const [tileLayer, setTileLayer] = useState(layers[0]);
@@ -33,18 +33,55 @@ const Map = ({ onHamburger }: { onHamburger: () => void }) => {
         }
     };
 
+    function isRouteInBbox(route: any, bbox: number[]): boolean {
+        if (!route?.geometry?.coordinates?.length) return false;
+        const [minLng, minLat, maxLng, maxLat] = bbox;
+        return route.geometry.coordinates.some(([lng, lat]: [number, number]) =>
+            lng >= minLng && lng <= maxLng && lat >= minLat && lat <= maxLat
+        );
+    }
+
+    function expandBbox(bbox: number[], ratio: number): number[] {
+        const [minLng, minLat, maxLng, maxLat] = bbox;
+        const dLng = (maxLng - minLng) * ratio;
+        const dLat = (maxLat - minLat) * ratio;
+        return [minLng - dLng, minLat - dLat, maxLng + dLng, maxLat + dLat];
+    }
+
+    const routesCacheRef = useRef<Map<string, any>>(new Map());
+
     const loadRoutes = async (bbox: number[], zoom: number) => {
         const data = await fetchRoutesInBbox(bbox, zoom);
-        setRoutes(data.features || []);
+        const fetched = data.features || [];
+
+        // Fusionner avec le cache
+        fetched.forEach((r: any) => {
+            const id = r.properties?.route_id || `${r.properties?.route_short_name}-${r.properties?.route_long_name}`;
+            routesCacheRef.current.set(id, r);
+        });
+
+        // On garde uniquement les routes proches de la bbox (pour éviter un cache infini)
+        const expandedBbox = expandBbox(bbox, 0.1); // 10% de marge
+        for (const [id, route] of routesCacheRef.current.entries()) {
+            if (!isRouteInBbox(route, expandedBbox)) {
+                routesCacheRef.current.delete(id);
+            }
+        }
+
+        // Met à jour la state avec le cache actuel
+        setRoutes(Array.from(routesCacheRef.current.values()));
     };
 
     function MapRefBinder() {
         const map = useMap();
+        const loggedRef = React.useRef(false);
+
         useEffect(() => {
-            if (map) {
+            if (map && !loggedRef.current) {
                 console.log("[Map] MapRefBinder: map attached");
                 mapRef.current = map as unknown as L.Map;
                 setMapReady(true);
+                loggedRef.current = true;
             }
         }, [map]);
         return null;
@@ -290,4 +327,4 @@ const Map = ({ onHamburger }: { onHamburger: () => void }) => {
     );
 };
 
-export default Map;
+export default MapView;
