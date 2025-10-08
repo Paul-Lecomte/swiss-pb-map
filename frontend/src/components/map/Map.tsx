@@ -12,6 +12,9 @@ import Search from "@/components/search/Search";
 import RouteInfoPanel from "@/components/routeinfopanel/RouteInfoPanel";
 import L from "leaflet";
 
+// Layer visibility state type
+type LayerKeys = "railway" | "stations" | "tram" | "bus" | "trolleybus" | "ferry" | "backgroundPois";
+
 const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
     const [stops, setStops] = useState<any[]>([]);
     const [zoom, setZoom] = useState(13);
@@ -23,6 +26,28 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
     const mapRef = useRef<L.Map | null>(null);
     const [selectedRoute, setSelectedRoute] = useState<any | null>(null);
     const handleCloseRoutePanel = () => setSelectedRoute(null);
+
+    // Visibility flags controlled by LayerOption
+    const [layersVisible, setLayersVisible] = useState<Record<LayerKeys, boolean>>({
+        railway: true,
+        stations: true,
+        tram: true,
+        bus: true,
+        trolleybus: true,
+        ferry: true,
+        backgroundPois: true,
+    });
+
+    // Listen to LayerOption toggle events
+    useEffect(() => {
+        const onToggle = (e: any) => {
+            const { key, value } = e?.detail || {};
+            if (!key) return;
+            setLayersVisible(prev => ({ ...prev, [key]: value }));
+        };
+        window.addEventListener("app:layer-visibility", onToggle as EventListener);
+        return () => window.removeEventListener("app:layer-visibility", onToggle as EventListener);
+    }, []);
 
     const loadStops = async (bbox: number[], zoom: number, maxZoom: number) => {
         if (zoom === maxZoom) {
@@ -257,6 +282,31 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
         return opened;
     };
 
+    // Helpers to detect route modes from properties
+    const trainTypes = new Set([
+        'S','SN','R','TGV','IC','IC1','IC2','IC3','IC5','IC6','IC8','IC21',
+        'IR','IR13','IR15','IR16','IR17','IR26','IR27','IR35','IR36','IR37','IR46','IR57','IR65','IR66','IR70',
+        'RE','RE33','RE37','RE48','S40','S41','EXT','EC','ICE','TGV Lyria','Thalys'
+    ]);
+    const tramTypes = new Set(['Tram','T','T1','T2','T3','T4','T5','T6','T7','T8']);
+    const busTypes = new Set(['Bus','B','B1','B2','B3','B4','B5','B6','B7','B8']);
+    const trolleybusTypes = new Set(['Trolleybus','TB']);
+    const ferryTypes = new Set(['Ferry','F','F1','F2','F3','3100','N1','N2','3150','BAT']);
+
+    const detectRouteMode = (route: any): LayerKeys | null => {
+        const props = route?.properties || {};
+        const shortName: string = props.route_short_name || "";
+        const desc: string = props.route_desc || shortName || "";
+        const token = (desc || shortName || "").trim();
+        const upper = token.toUpperCase();
+        if (trainTypes.has(token) || upper.startsWith('S') || upper.startsWith('IC') || upper.startsWith('IR') || upper.startsWith('RE')) return 'railway';
+        if (tramTypes.has(token) || upper.startsWith('T')) return 'tram';
+        if (trolleybusTypes.has(token) || upper.startsWith('TB')) return 'trolleybus';
+        if (ferryTypes.has(token)) return 'ferry';
+        if (busTypes.has(token) || upper.startsWith('B')) return 'bus';
+        return null;
+    };
+
     return (
         <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", zIndex: 0 }}>
             <div style={{
@@ -292,14 +342,24 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
                 <MapRefBinder />
                 <MapEvents />
 
-                {routes.map((route: any, idx: number) => (
-                    <RouteLine
-                        key={idx}
-                        route={route}
-                        color={route.properties?.route_color}
-                        onClick={() => setSelectedRoute(route)}
-                    />
-                ))}
+                {routes
+                    .filter((route: any) => {
+                        const mode = detectRouteMode(route);
+                        if (mode === 'railway') return layersVisible.railway;
+                        if (mode === 'tram') return layersVisible.tram;
+                        if (mode === 'bus') return layersVisible.bus;
+                        if (mode === 'trolleybus') return layersVisible.trolleybus;
+                        if (mode === 'ferry') return layersVisible.ferry;
+                        return true; // unknown types are shown by default
+                    })
+                    .map((route: any, idx: number) => (
+                        <RouteLine
+                            key={idx}
+                            route={route}
+                            color={route.properties?.route_color}
+                            onClick={() => setSelectedRoute(route)}
+                        />
+                    ))}
 
                 {selectedRoute && (
                     <RouteInfoPanel
@@ -308,15 +368,17 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
                     />
                 )}
 
-                {stops
-                    // Keep normal filter but allow pending stop even without routes
-                    .filter((stop: any) =>
-                        (stop.properties.routes && stop.properties.routes.length > 0) ||
-                        stop.properties.stop_id === pendingStopId
-                    )
-                    .map((stop: any, idx: number) => (
-                        <StopMarker key={idx} stop={stop} />
-                    ))}
+                {layersVisible.stations && (
+                    stops
+                        // Keep normal filter but allow pending stop even without routes
+                        .filter((stop: any) =>
+                            (stop.properties.routes && stop.properties.routes.length > 0) ||
+                            stop.properties.stop_id === pendingStopId
+                        )
+                        .map((stop: any, idx: number) => (
+                            <StopMarker key={idx} stop={stop} />
+                        ))
+                )}
 
                 <MapLayerSwitcher selectedLayer={tileLayer.name} onChange={(name) => {
                     const layer = layers.find(l => l.name === name);
