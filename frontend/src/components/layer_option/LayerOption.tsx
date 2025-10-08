@@ -4,7 +4,52 @@ import React from "react";
 
 type Props = { onClose?: () => void };
 
+type LayerKeys = "railway" | "stations" | "tram" | "bus" | "trolleybus" | "ferry" | "backgroundPois";
+
+type LayerState = Record<LayerKeys, boolean>;
+
+const labelToKey: Record<string, LayerKeys> = {
+  "Railway lines": "railway",
+  "Stations": "stations",
+  "Tram": "tram",
+  "Bus": "bus",
+  "Trolleybus": "trolleybus",
+  "Ferry": "ferry",
+  "Background POIs": "backgroundPois",
+};
+
 export default function LayerOption({ onClose }: Props) {
+  const [state, setState] = React.useState<LayerState>({
+    railway: true,
+    stations: true,
+    tram: true,
+    bus: true,
+    trolleybus: true,
+    ferry: true,
+    backgroundPois: true,
+  });
+
+  const toggle = (key: LayerKeys) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.checked;
+    setState((prev) => ({ ...prev, [key]: value }));
+    // Notify the app so the map can react
+    try {
+      window.dispatchEvent(
+        new CustomEvent("app:layer-visibility", { detail: { key, value } })
+      );
+    } catch {}
+  };
+
+  const labels = [
+    "Railway lines",
+    "Stations",
+    "Tram",
+    "Bus",
+    "Trolleybus",
+    "Ferry",
+    "Background POIs",
+  ];
+
   return (
     <div
       style={{
@@ -22,20 +67,19 @@ export default function LayerOption({ onClose }: Props) {
         <button onClick={onClose} aria-label="Close" style={{ background: "transparent", border: "none", cursor: "pointer" }}>✕</button>
       </div>
       <div style={{ fontSize: 12, display: "grid", gap: 6 }}>
-        {[
-          "Railway lines",
-          "Stations",
-          "Tram",
-          "Bus",
-          "Trolleybus",
-          "Ferry",
-          "Background POIs",
-        ].map((label) => (
-          <label key={label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input type="checkbox" defaultChecked />
-            <span>{label}</span>
-          </label>
-        ))}
+        {labels.map((label) => {
+          const key = labelToKey[label];
+          return (
+            <label key={label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={state[key]}
+                onChange={toggle(key)}
+              />
+              <span>{label}</span>
+            </label>
+          );
+        })}
       </div>
     </div>
   );
