@@ -296,10 +296,13 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
     const detectRouteMode = (route: any): LayerKeys | null => {
         const props = route?.properties || {};
         const shortName: string = props.route_short_name || "";
+        const type: string = props.route_type || "";
+        if (shortName === "m2" && type === "401") return "tram";
+        if (shortName === "m1" && type === "401") return "tram";
         const desc: string = props.route_desc || shortName || "";
         const token = (desc || shortName || "").trim();
         const upper = token.toUpperCase();
-        if (trainTypes.has(token) || upper.startsWith('S') || upper.startsWith('IC') || upper.startsWith('IR') || upper.startsWith('RE')) return 'railway';
+        if (trainTypes.has(token) || upper.startsWith('S') || upper.startsWith('IC') || upper.startsWith('EV') || upper.startsWith('IR') || upper.startsWith('RE')) return 'railway';
         if (tramTypes.has(token) || upper.startsWith('T')) return 'tram';
         if (trolleybusTypes.has(token) || upper.startsWith('TB')) return 'trolleybus';
         if (ferryTypes.has(token)) return 'ferry';
