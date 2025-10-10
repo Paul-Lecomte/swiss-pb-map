@@ -2,8 +2,8 @@
 const axios = require('axios');
 
 /**
- * Mappe un GTFS route_type vers un profil OSRM
- * (OSRM supporte seulement driving, cycling, walking)
+ * Map GTFS route_type to OSRM profile.
+ * (OSRM only support driving, cycling, walking)
  */
 function mapRouteTypeToProfile(routeType) {
     switch (parseInt(routeType, 10)) {
@@ -27,8 +27,7 @@ function mapRouteTypeToProfile(routeType) {
 }
 
 /**
- * Construit une géométrie complète entre tous les arrêts d’un trajet
- * en un seul appel OSRM (plus rapide et précis).
+ * Build geometry for a route given ordered stops.
  */
 async function buildRouteGeometry(orderedStops, routeType = 3) {
     if (!orderedStops || orderedStops.length < 2) return [];
@@ -52,7 +51,7 @@ async function buildRouteGeometry(orderedStops, routeType = 3) {
 }
 
 /**
- * Ancienne version segment-par-segment (gardée si besoin).
+ * old function to get route between two stops only (not used anymore)
  */
 async function getRouteBetweenStops(stopA, stopB, profile = 'driving') {
     const url = `https://router.project-osrm.org/route/v1/${profile}/${stopA.stop_lon},${stopA.stop_lat};${stopB.stop_lon},${stopB.stop_lat}?geometries=geojson`;

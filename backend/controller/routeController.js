@@ -7,7 +7,7 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
 
     const [minLng, minLat, maxLng, maxLat] = bbox.split(',').map(Number);
 
-    // Cherche les routes dont les bounds chevauchent la bbox
+    // Find routes whose bounding boxes intersect with the given bbox
     const routes = await ProcessedRoute.find({
         'bounds.min_lat': { $lte: maxLat },
         'bounds.max_lat': { $gte: minLat },
