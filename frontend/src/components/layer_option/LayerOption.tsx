@@ -1,11 +1,10 @@
-"use client";
-
 import React from "react";
+import { Box, Typography, IconButton, Switch, FormControlLabel, Paper, Divider } from "@mui/material";
+import CloseIcon from "@mui/icons-material/Close";
 
 type Props = { onClose?: () => void };
 
 type LayerKeys = "railway" | "stations" | "tram" | "bus" | "trolleybus" | "ferry" | "backgroundPois";
-
 type LayerState = Record<LayerKeys, boolean>;
 
 const labelToKey: Record<string, LayerKeys> = {
@@ -32,10 +31,9 @@ export default function LayerOption({ onClose }: Props) {
   const toggle = (key: LayerKeys) => (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.checked;
     setState((prev) => ({ ...prev, [key]: value }));
-    // Notify the app so the map can react
     try {
       window.dispatchEvent(
-        new CustomEvent("app:layer-visibility", { detail: { key, value } })
+          new CustomEvent("app:layer-visibility", { detail: { key, value } })
       );
     } catch {}
   };
@@ -51,36 +49,32 @@ export default function LayerOption({ onClose }: Props) {
   ];
 
   return (
-    <div
-      style={{
-        width: 220,
-        background: "#fff",
-        border: "1px solid rgba(0,0,0,0.15)",
-        borderRadius: 10,
-        boxShadow: "0 10px 24px rgba(0,0,0,0.14)",
-        padding: 12,
-        color: "#222",
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <strong style={{ fontSize: 12 }}>Layer option</strong>
-        <button onClick={onClose} aria-label="Close" style={{ background: "transparent", border: "none", cursor: "pointer" }}>✕</button>
-      </div>
-      <div style={{ fontSize: 12, display: "grid", gap: 6 }}>
-        {labels.map((label) => {
-          const key = labelToKey[label];
-          return (
-            <label key={label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <input
-                type="checkbox"
-                checked={state[key]}
-                onChange={toggle(key)}
-              />
-              <span>{label}</span>
-            </label>
-          );
-        })}
-      </div>
-    </div>
+      <Paper elevation={6} sx={{ width: 280, borderRadius: 3, p: 2 }}>
+        <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
+          <Typography variant="subtitle1" fontWeight={700}>Options de couches</Typography>
+          <IconButton onClick={onClose} size="small" aria-label="Fermer">
+            <CloseIcon />
+          </IconButton>
+        </Box>
+        <Divider sx={{ mb: 2 }} />
+        <Box display="flex" flexDirection="column" gap={1}>
+          {labels.map((label) => {
+            const key = labelToKey[label];
+            return (
+                <FormControlLabel
+                    key={label}
+                    control={
+                      <Switch
+                          checked={state[key]}
+                          onChange={toggle(key)}
+                          color="primary"
+                      />
+                    }
+                    label={label}
+                />
+            );
+          })}
+        </Box>
+      </Paper>
   );
 }

@@ -25,7 +25,19 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
     const [routes, setRoutes] = useState<any[]>([]);
     const mapRef = useRef<L.Map | null>(null);
     const [selectedRoute, setSelectedRoute] = useState<any | null>(null);
-    const handleCloseRoutePanel = () => setSelectedRoute(null);
+
+    // Ajout pour le highlight
+    const [highlightedRouteId, setHighlightedRouteId] = useState<string | null>(null);
+
+    const handleRouteClick = (route: any) => {
+        setSelectedRoute(route);
+        setHighlightedRouteId(route.properties?.route_id || `${route.properties?.route_short_name}-${route.properties?.route_long_name}`);
+    };
+
+    const handleCloseRoutePanel = () => {
+        setSelectedRoute(null);
+        setHighlightedRouteId(null);
+    };
 
     // Visibility flags controlled by LayerOption
     const [layersVisible, setLayersVisible] = useState<Record<LayerKeys, boolean>>({
@@ -347,22 +359,30 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
 
                 {routes
                     .filter((route: any) => {
+                        if (highlightedRouteId) {
+                            const id = route.properties?.route_id || `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
+                            return id === highlightedRouteId;
+                        }
                         const mode = detectRouteMode(route);
                         if (mode === 'railway') return layersVisible.railway;
                         if (mode === 'tram') return layersVisible.tram;
                         if (mode === 'bus') return layersVisible.bus;
                         if (mode === 'trolleybus') return layersVisible.trolleybus;
                         if (mode === 'ferry') return layersVisible.ferry;
-                        return true; // unknown types are shown by default
+                        return true;
                     })
-                    .map((route: any, idx: number) => (
-                        <RouteLine
-                            key={idx}
-                            route={route}
-                            color={route.properties?.route_color}
-                            onClick={() => setSelectedRoute(route)}
-                        />
-                    ))}
+                    .map((route: any, idx: number) => {
+                        const id = route.properties?.route_id || `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
+                        return (
+                            <RouteLine
+                                key={idx}
+                                route={route}
+                                color={route.properties?.route_color}
+                                onClick={() => handleRouteClick(route)}
+                                highlighted={highlightedRouteId === id}
+                            />
+                        );
+                    })}
 
                 {selectedRoute && (
                     <RouteInfoPanel
