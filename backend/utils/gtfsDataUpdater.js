@@ -531,7 +531,6 @@ async function populateProcessedRoutesFromFiles() {
 
         let geometryCoords = [];
         if (orderedStops.length >= 2) {
-            // ✅ on passe le route_type au helper
             geometryCoords = await buildRouteGeometry(orderedStops, route.route_type);
         }
 

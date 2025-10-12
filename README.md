@@ -65,7 +65,9 @@ SwissTransitMap/
 │   │   ├── stopController.js       # Stop-related logic
 │   │   └── tripController.js       # Trip-related logic
 │   ├── data/                       # Static and processed data files
-│   │   └── stoptimes.json          # Timetable data
+│   │   ├── stoptimes.json          # Timetable data
+│   │   ├── switzerland-latest.osm.pbf  # OSM data for Switzerland
+│   │   └── gtfs.zip                # Raw GTFS data
 │   ├── fastest_path/               # C++ shortest path algorithm
 │   │
 │   ├── middleware/                 # Express middlewares
@@ -87,6 +89,7 @@ SwissTransitMap/
 │   ├── utils/                      # GTFS & real-time utilities
 │   │   ├── exportStoptimes.js      # Export timetable data
 │   │   ├── gtfsDataUpdater.js      # GTFS data update logic
+│   │   ├── routingHelper.js        # Routing helper functions
 │   │   ├── gtfsRealTime.js         # GTFS real-time integration
 │   │   └── validateJson.py         # JSON validation script
 ├── frontend/                       # Next.js/React frontend application
