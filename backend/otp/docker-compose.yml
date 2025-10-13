@@ -5,5 +5,5 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - "C:/otp-data:/var/opentripplanner/data"
-    command: --build /var/opentripplanner/data --serve
+      - "../data:/var/otp/data"    # map your data folder
+    command: ["--build", "--serve", "/var/otp/data"]
