@@ -1,72 +1,99 @@
-// backend/utils/routingHelper.js
-const axios = require('axios');
+const axios = require("axios");
+const { buildGeometryFromSwissTNE } = require("./swisstneHelper");
 
 /**
- * Map GTFS route_type to OSRM profile.
- * (OSRM only support driving, cycling, walking)
+ * Map GTFS route_type to OSRM profile
  */
 function mapRouteTypeToProfile(routeType) {
     switch (parseInt(routeType, 10)) {
-        case 0: // Tram, Light rail
-        case 1: // Subway
-        case 2: // Rail
-        case 4: // Ferry
-        case 5: // Cable car
-        case 6: // Gondola
-        case 7: // Funicular
-            return 'driving'; // fallback sur "driving" car OSRM ne supporte pas ces modes
-        case 3: // Bus
-            return 'driving';
-        case 11: // Trolleybus
-            return 'driving';
-        case 12: // Monorail
-            return 'driving';
-        default:
-            return 'driving';
+        case 2: return "train";
+        case 4: return "ferry";
+        case 5: case 6: case 7: case 1400: return "cycling";
+        default: return "driving";
     }
 }
 
 /**
- * Build geometry for a route given ordered stops.
+ * Split stops into overlapping batches of size n.
+ * Overlap ensures consecutive segments connect properly.
  */
-async function buildRouteGeometry(orderedStops, routeType = 3) {
-    if (!orderedStops || orderedStops.length < 2) return [];
+function batchStops(orderedStops, batchSize = 30) {
+    const batches = [];
+    for (let i = 0; i < orderedStops.length; i += batchSize - 1) {
+        let batch = orderedStops.slice(i, i + batchSize);
+        if (i !== 0) batch = [orderedStops[i - 1], ...batch];
+        batches.push(batch);
+    }
+    return batches;
+}
+
+/**
+ * Query OSRM for coordinates of a stop batch
+ */
+async function fetchOSRMGeometry(batch, routeType) {
+    if (batch.length < 2) return batch.map(s => [s.stop_lon, s.stop_lat]);
 
     const profile = mapRouteTypeToProfile(routeType);
-
-    const coords = orderedStops.map(s => `${s.stop_lon},${s.stop_lat}`).join(';');
-    const url = `https://router.project-osrm.org/route/v1/${profile}/${coords}?overview=full&geometries=geojson`;
+    const coordsStr = batch.map(s => `${s.stop_lon},${s.stop_lat}`).join(";");
+    const url = `http://router.project-osrm.org/route/v1/${profile}/${coordsStr}?overview=full&geometries=geojson`;
 
     try {
-        const response = await axios.get(url);
-        if (response.data && response.data.routes && response.data.routes[0]) {
-            return response.data.routes[0].geometry.coordinates;
+        const resp = await axios.get(url, { timeout: 10000 });
+        if (resp.data?.routes?.[0]?.geometry?.coordinates?.length) {
+            return resp.data.routes[0].geometry.coordinates;
         }
     } catch (err) {
-        console.error("OSRM error:", err.message);
+        console.warn("OSRM fallback failed:", err.message);
     }
 
-    // fallback : simple ligne droite entre arrêts
-    return orderedStops.map(s => [s.stop_lon, s.stop_lat]);
+    // Last-resort: straight lines
+    return batch.map(s => [s.stop_lon, s.stop_lat]);
 }
 
 /**
- * old function to get route between two stops only (not used anymore)
+ * Build route geometry using SwissTNE first, then fallback to OSRM/straight lines.
+ * Handles long routes by batching stops to avoid huge arrays.
+ * Uses spatial index from swisstneHelper for speed/memory.
  */
-async function getRouteBetweenStops(stopA, stopB, profile = 'driving') {
-    const url = `https://router.project-osrm.org/route/v1/${profile}/${stopA.stop_lon},${stopA.stop_lat};${stopB.stop_lon},${stopB.stop_lat}?geometries=geojson`;
+async function buildRouteGeometry(orderedStops, routeType = 3, parallelism = 2) {
+    if (!orderedStops || orderedStops.length < 2) return [];
 
-    try {
-        const response = await axios.get(url);
-        return response.data.routes[0].geometry.coordinates;
-    } catch (err) {
-        console.error("OSRM error:", err.message);
-        return [[stopA.stop_lon, stopA.stop_lat], [stopB.stop_lon, stopB.stop_lat]];
+    const intRouteType = parseInt(routeType, 10);
+    const mergedCoords = [];
+    const batches = batchStops(orderedStops, 50);
+
+    // Process batches in parallel chunks
+    for (let i = 0; i < batches.length; i += parallelism) {
+        const batchSlice = batches.slice(i, i + parallelism);
+
+        const batchResults = await Promise.all(
+            batchSlice.map(async batch => {
+                try {
+                    const coords = await buildGeometryFromSwissTNE(batch, intRouteType);
+                    if (!coords || coords.length < 2) throw new Error("SwissTNE returned too few coordinates");
+                    return coords;
+                } catch {
+                    // Fallback to OSRM or straight lines
+                    return fetchOSRMGeometry(batch, intRouteType);
+                }
+            })
+        );
+
+        // Merge results, skipping duplicates
+        for (const coords of batchResults) {
+            for (const coord of coords) {
+                const last = mergedCoords[mergedCoords.length - 1];
+                if (!last || last[0] !== coord[0] || last[1] !== coord[1]) {
+                    mergedCoords.push(coord);
+                }
+            }
+        }
     }
+
+    return mergedCoords;
 }
 
 module.exports = {
     buildRouteGeometry,
-    getRouteBetweenStops,
     mapRouteTypeToProfile
 };
