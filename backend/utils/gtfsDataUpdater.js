@@ -456,36 +456,12 @@ async function populateProcessedRoutesFromFiles() {
     console.log('Cleared ProcessedRoute collection.');
 
     const routes = await parseCSV('routes.txt', Route, 'Route', { saveToDB: false });
-    const trips = await parseCSV('trips.txt', Trip, 'Trip', { saveToDB: false });
-
-    const tripGroups = new Map();
-    const tripById = new Map();
-    for (const t of trips) {
-        if (!tripGroups.has(t.route_id)) tripGroups.set(t.route_id, []);
-        tripGroups.get(t.route_id).push(t);
-        tripById.set(t.trip_id, t);
-    }
-
+    // Count stop_times per trip (streaming, memory efficient)
     const counts = await countStopTimesPerTrip('stop_times.txt');
 
-    const mainTripForRoute = new Map();
-    const mainTripIds = new Set();
-    for (const route of routes) {
-        const tripsForRoute = tripGroups.get(route.route_id) || [];
-        let bestTripId = null;
-        let bestCount = -1;
-        for (const trip of tripsForRoute) {
-            const c = counts.get(trip.trip_id) || 0;
-            if (c > bestCount) {
-                bestCount = c;
-                bestTripId = trip.trip_id;
-            }
-        }
-        if (bestTripId) {
-            mainTripForRoute.set(route.route_id, bestTripId);
-            mainTripIds.add(bestTripId);
-        }
-    }
+    // Identify main trip for each route by streaming trips.txt (avoid loading whole file)
+    const mainTripForRoute = await findMainTripsForRoutes('trips.txt', counts);
+    const mainTripIds = new Set(mainTripForRoute.values());
 
     const stopTimesMap = await collectStopTimesForTripIds('stop_times.txt', mainTripIds);
     const stopMap = await buildStopMap('stops.txt');
@@ -493,12 +469,11 @@ async function populateProcessedRoutesFromFiles() {
     const batchSize = 50;
     let batch = [];
     let insertedCount = 0;
-    let routeIndex = 0;
 
-    for (const route of routes) {
-        routeIndex++;
-        if (routeIndex % 10 === 0 || routeIndex === 1) {
-            console.log(`Building route ${routeIndex}/${routes.length} (route_id=${route.route_id})`);
+    for (let routeIndex = 0; routeIndex < routes.length; routeIndex++) {
+        const route = routes[routeIndex];
+        if (routeIndex % 10 === 0 || routeIndex === 0) {
+            console.log(`Building route ${routeIndex + 1}/${routes.length} (route_id=${route.route_id})`);
         }
 
         const mainTripId = mainTripForRoute.get(route.route_id);
@@ -531,7 +506,13 @@ async function populateProcessedRoutesFromFiles() {
 
         let geometryCoords = [];
         if (orderedStops.length >= 2) {
-            geometryCoords = await buildRouteGeometry(orderedStops, route.route_type);
+            try {
+                // 🟢 SwissTNE-first geometry computation
+                console.log(`➡️  Computing geometry (SwissTNE-first) for route_type=${route.route_type} (${orderedStops.length} stops)...`);
+                geometryCoords = await buildRouteGeometry(orderedStops, route.route_type);
+            } catch (err) {
+                console.error(`❌ Failed to build geometry for route ${route.route_id}:`, err.message);
+            }
         }
 
         const processedRoute = {
@@ -554,7 +535,7 @@ async function populateProcessedRoutesFromFiles() {
         batch.push(processedRoute);
 
         if (batch.length === batchSize) {
-            console.log(`Inserting batch of ${batch.length} processed routes (route ${routeIndex}/${routes.length})`);
+            console.log(`Inserting batch of ${batch.length} processed routes`);
             await ProcessedRoute.insertMany(batch, { ordered: false });
             insertedCount += batch.length;
             batch = [];
@@ -567,7 +548,7 @@ async function populateProcessedRoutesFromFiles() {
         insertedCount += batch.length;
     }
 
-    console.log(`ProcessedRoute file-based population completed. Inserted: ${insertedCount}`);
+    console.log(`✅ ProcessedRoute population completed. Total inserted: ${insertedCount}`);
 }
 
 // -------------------------
@@ -669,3 +650,48 @@ main().catch(err => {
     mongoose.connection.close();
     process.exit(1);
 });
+
+// Streaming helper: determine main trip (max stop_times count) per route without loading all trips into memory
+async function findMainTripsForRoutes(fileName, countsMap) {
+    const filePath = path.join(DATA_DIR, fileName);
+    if (!fs.existsSync(filePath)) return new Map();
+
+    console.log('Selecting main trip per route (streaming trips.txt)...');
+    return new Promise((resolve, reject) => {
+        const bestByRoute = new Map(); // route_id -> {trip_id, count}
+
+        const parser = parse({
+            columns: (header) => header.map(col => col.trim().toLowerCase()),
+            relax_column_count: true,
+            skip_empty_lines: true,
+        });
+
+        const rs = fs.createReadStream(filePath);
+        rs.pipe(parser);
+
+        parser.on('data', (row) => {
+            const routeId = row.route_id;
+            const tripId = row.trip_id;
+            if (!routeId || !tripId) return;
+            const c = countsMap.get(tripId) || 0;
+            const cur = bestByRoute.get(routeId);
+            if (!cur || c > cur.count) {
+                bestByRoute.set(routeId, { trip_id: tripId, count: c });
+            }
+        });
+
+        parser.on('end', () => {
+            const result = new Map();
+            for (const [routeId, info] of bestByRoute) {
+                if (info && info.trip_id) result.set(routeId, info.trip_id);
+            }
+            console.log(`Main trips selected for ${result.size} routes`);
+            resolve(result);
+        });
+
+        parser.on('error', (err) => {
+            console.error('Error streaming trips.txt:', err);
+            reject(err);
+        });
+    });
+}
