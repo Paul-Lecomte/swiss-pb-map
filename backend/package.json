@@ -4,7 +4,8 @@
   "description": "Web app for public transport in SWitzerland",
   "main": "server.js",
   "scripts": {
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "update-gtfs": "node --max-old-space-size=16384 utils/gtfsDataUpdater.js --processedroutes"
   },
   "author": "Lecomte Paul",
   "license": "MIT",
@@ -28,6 +29,7 @@
     "mongodb": "^6.18.0",
     "mongoose": "^8.9.7",
     "morgan": "^1.10.0",
+    "proj4": "^2.9.2",
     "stream-json": "^1.9.1",
     "unzipper": "^0.12.3",
     "xmldom": "^0.6.0"
