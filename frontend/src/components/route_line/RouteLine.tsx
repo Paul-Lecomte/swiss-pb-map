@@ -1,3 +1,4 @@
+// typescript
 import React from "react";
 import { Polyline, CircleMarker } from "react-leaflet";
 
@@ -9,8 +10,21 @@ interface RouteLineProps {
 }
 
 const RouteLine: React.FC<RouteLineProps> = ({ route, color = "#0074D9", onClick, highlighted }) => {
-    const positions = route.geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]]);
-    const routeColor = route.route_color || color;
+    if (!route?.geometry?.coordinates || !Array.isArray(route.geometry.coordinates) || route.geometry.coordinates.length === 0) {
+        return null;
+    }
+
+    // Assure numeric values and bon ordre: backend fournit [lon, lat]
+    const positions = route.geometry.coordinates
+        .map((coord: any) => {
+            const lon = Number(coord[0]);
+            const lat = Number(coord[1]);
+            if (Number.isFinite(lat) && Number.isFinite(lon)) return [lat, lon];
+            return null;
+        })
+        .filter(Boolean) as [number, number][];
+
+    const routeColor = route.properties?.route_color || color;
     const stops = route.properties?.stops || [];
 
     return (
@@ -20,7 +34,7 @@ const RouteLine: React.FC<RouteLineProps> = ({ route, color = "#0074D9", onClick
                 pathOptions={{
                     color: routeColor,
                     weight: 1,
-                    opacity: 0.80,
+                    opacity: 0.8,
                     lineCap: "round",
                 }}
                 eventHandlers={{
@@ -30,14 +44,14 @@ const RouteLine: React.FC<RouteLineProps> = ({ route, color = "#0074D9", onClick
             {highlighted && stops.map((stop: any, idx: number) => (
                 <CircleMarker
                     key={idx}
-                    center={[stop.stop_lat, stop.stop_lon]}
-                    radius={4}
+                    center={[Number(stop.stop_lat), Number(stop.stop_lon)] as [number, number]}
                     pathOptions={{
                         color: routeColor,
                         fillColor: routeColor,
                         fillOpacity: 0.9,
                         weight: 1,
                     }}
+                    {...({ radius: 4 } as any)} // cast pour contourner mismatch de types TS si présent
                 />
             ))}
         </>

@@ -17,7 +17,7 @@ function mapRouteTypeToProfile(routeType) {
  * Split stops into overlapping batches of size n.
  * Overlap ensures consecutive segments connect properly.
  */
-function batchStops(orderedStops, batchSize = 30) {
+function batchStops(orderedStops, batchSize = 60) {
     const batches = [];
     for (let i = 0; i < orderedStops.length; i += batchSize - 1) {
         let batch = orderedStops.slice(i, i + batchSize);
@@ -57,6 +57,12 @@ async function fetchOSRMGeometry(batch, routeType) {
  */
 async function buildRouteGeometry(orderedStops, routeType = 3, parallelism = 2) {
     if (!orderedStops || orderedStops.length < 2) return [];
+
+    // Allow overriding parallelism via env var
+    const envPar = parseInt(process.env.ROUTE_GEOM_PARALLELISM || '', 10);
+    if (!parallelism || Number.isNaN(parallelism)) {
+        parallelism = Number.isInteger(envPar) && envPar > 0 ? envPar : 4;
+    }
 
     const intRouteType = parseInt(routeType, 10);
     const mergedCoords = [];
