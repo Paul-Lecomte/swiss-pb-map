@@ -450,6 +450,8 @@ async function processStopBatch(stopsBatch, tripMap, routeMap, batchNumber) {
 // File-based ProcessedRoutes (memory efficient)
 // -------------------------
 
+//TODO : Fix current problem with the swisstne data not giving out accurate results for some routes
+
 async function populateProcessedRoutesFromFiles() {
     console.log('Starting file-based population of ProcessedRoute (memory-efficient)...');
     await ProcessedRoute.deleteMany({});
