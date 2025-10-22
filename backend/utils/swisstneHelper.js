@@ -1,3 +1,4 @@
+// swisstneHelper.js
 const path = require("path");
 const fs = require("fs");
 const turf = require("@turf/turf");
@@ -7,21 +8,40 @@ const { streamArray } = require("stream-json/streamers/StreamArray");
 const { pick } = require("stream-json/filters/Pick");
 const proj4 = require("proj4");
 
-// EPSG:2056 (CH1903+ / LV95) to WGS84
-proj4.defs("EPSG:2056", "+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs");
+// -----------------------------
+// Configuration / paths
+// -----------------------------
+proj4.defs(
+    "EPSG:2056",
+    "+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs"
+);
 const lv95ToWgs84 = (E, N) => {
     const [lon, lat] = proj4("EPSG:2056", "WGS84", [E, N]);
     return [lon, lat];
 };
 
-const BN_EDGE_PATH = path.join(__dirname, "../data/swisstne/bn_edge.json");
+const BASE_DIR = path.join(__dirname, "../data/swisstne");
+const BN_EDGE_PATH = path.join(BASE_DIR, "bn_edge.json");
+const BN_NODE_PATH = path.join(BASE_DIR, "bn_node.json");
+const BN_AREA_PATH = path.join(BASE_DIR, "bn_area.json");
+const LUT_BASETYPE_PATH = path.join(BASE_DIR, "lut_base_type.json");
+const LUT_AREATYPE_PATH = path.join(BASE_DIR, "lut_area_type.json");
+const LUT_QUALITYSTATUS_PATH = path.join(BASE_DIR, "lut_quality_status.json");
 
-// Note: we build lightweight spatial indexes and cache them per coarse bbox+basetype
-// to avoid re-scanning bn_edge.json for every single route while keeping memory bounded.
-const localIndexCache = new Map(); // key -> GeoJSONRbush
-const MAX_CACHE_SIZE = 12; // simple LRU cap to limit memory
+// -----------------------------
+// Caches & constants
+// -----------------------------
+const localIndexCache = new Map(); // key -> { index, bbox, ts }
+const MAX_CACHE_SIZE = 12; // LRU cap
 const globalIndexByBaseType = new Map(); // optional global index cache
+let nodesById = null; // Map<object_id -> { coord: [lon,lat], props }>
+let lutBaseType = null;
+let lutAreaType = null;
+let lutQualityStatus = null;
 
+// -----------------------------
+// Utilities
+// -----------------------------
 function getBaseTypeForRoute(routeType) {
     const t = parseInt(routeType, 10);
     if ([2, 101, 102, 103, 105, 106, 107, 109, 116, 117].includes(t)) return 2; // Rail
@@ -30,43 +50,142 @@ function getBaseTypeForRoute(routeType) {
     return 1; // Roads, buses, cars, etc.
 }
 
-/**
- * Build a per-route local spatial index for a given baseType by streaming bn_edge.json
- * and inserting only features whose bbox intersects the route bbox (expanded by bufferKm).
- */
-function computeExpandedBBox(orderedStops, bufferKm = 2) {
-    let minLat = Infinity, minLon = Infinity, maxLat = -Infinity, maxLon = -Infinity;
+// Per-mode defaults and env overrides for corridor width (km)
+function getCorridorKmForRoute(routeType) {
+    const t = parseInt(routeType, 10);
+    // Allow broad override
+    const globalOverride = process.env.SWISSTNE_CORRIDOR_KM && parseFloat(process.env.SWISSTNE_CORRIDOR_KM);
+    // Per-mode overrides from env
+    const envRoad = process.env.SWISSTNE_CORRIDOR_KM_ROAD && parseFloat(process.env.SWISSTNE_CORRIDOR_KM_ROAD);
+    const envRail = process.env.SWISSTNE_CORRIDOR_KM_RAIL && parseFloat(process.env.SWISSTNE_CORRIDOR_KM_RAIL);
+    const envCable = process.env.SWISSTNE_CORRIDOR_KM_CABLE && parseFloat(process.env.SWISSTNE_CORRIDOR_KM_CABLE);
+    const envWater = process.env.SWISSTNE_CORRIDOR_KM_WATER && parseFloat(process.env.SWISSTNE_CORRIDOR_KM_WATER);
+
+    // Sensible defaults (km)
+    const dRoad = 0.8;
+    const dRail = 1.5;
+    const dCable = 0.6;
+    const dWater = 2.5;
+
+    if (!Number.isNaN(globalOverride) && globalOverride > 0.1) return globalOverride;
+
+    if ([2, 101, 102, 103, 105, 106, 107, 109, 116, 117].includes(t)) return !Number.isNaN(envRail) && envRail > 0 ? envRail : dRail;
+    if (t === 4) return !Number.isNaN(envWater) && envWater > 0 ? envWater : dWater;
+    if ([5, 6, 7, 1400].includes(t)) return !Number.isNaN(envCable) && envCable > 0 ? envCable : dCable;
+    return !Number.isNaN(envRoad) && envRoad > 0 ? envRoad : dRoad;
+}
+
+function bboxIntersects(a, b) {
+    return a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1];
+}
+
+function makeCacheKey(baseType, orderedStops, bufferKm = 2, cellSizeDeg = 0.5) {
+    let sumLat = 0,
+        sumLon = 0;
     for (const s of orderedStops) {
-        if (s.stop_lat < minLat) minLat = s.stop_lat;
-        if (s.stop_lat > maxLat) maxLat = s.stop_lat;
-        if (s.stop_lon < minLon) minLon = s.stop_lon;
-        if (s.stop_lon > maxLon) maxLon = s.stop_lon;
+        sumLat += s.stop_lat;
+        sumLon += s.stop_lon;
     }
-    const delta = bufferKm / 111; // ~degrees per km
-    return [minLon - delta, minLat - delta, maxLon + delta, maxLat + delta];
+    const cy = sumLat / orderedStops.length;
+    const cx = sumLon / orderedStops.length;
+    const ix = Math.round(cx / cellSizeDeg);
+    const iy = Math.round(cy / cellSizeDeg);
+    return [baseType, ix, iy, cellSizeDeg, bufferKm].join(":");
 }
 
 function computeTileBBoxFromStops(orderedStops, cellSizeDeg = 0.25, bufferKm = 2) {
-    // compute center
-    let sumLat = 0, sumLon = 0;
-    for (const s of orderedStops) { sumLat += s.stop_lat; sumLon += s.stop_lon; }
+    let sumLat = 0,
+        sumLon = 0;
+    for (const s of orderedStops) {
+        sumLat += s.stop_lat;
+        sumLon += s.stop_lon;
+    }
     const cy = sumLat / orderedStops.length;
     const cx = sumLon / orderedStops.length;
     const half = cellSizeDeg / 2;
     const bbox = [cx - half, cy - half, cx + half, cy + half];
-    // expand by buffer
     const delta = bufferKm / 111;
     return [bbox[0] - delta, bbox[1] - delta, bbox[2] + delta, bbox[3] + delta];
 }
 
-function bboxIntersects(a, b) {
-    // a,b: [minX, minY, maxX, maxY]
-    return a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1];
+// Simple LRU housekeeping for localIndexCache
+function touchCacheEntry(key) {
+    const entry = localIndexCache.get(key);
+    if (!entry) return;
+    localIndexCache.delete(key);
+    localIndexCache.set(key, entry);
+    entry.ts = Date.now();
 }
 
+// -----------------------------
+// Small LUT loaders (likely small files)
+// -----------------------------
+function tryLoadLUT(filePath) {
+    try {
+        if (!fs.existsSync(filePath)) return {};
+        const raw = fs.readFileSync(filePath, "utf8");
+        // many LUT exports are small FeatureCollections; try parse and reduce
+        const parsed = JSON.parse(raw);
+        const map = {};
+        if (parsed && Array.isArray(parsed.features)) {
+            for (const f of parsed.features) {
+                const props = f.properties || {};
+                // common keys: object_key/code and value/value_short - handle variability
+                const code = props.object_key ?? props.code ?? props.key ?? props.id;
+                const val = props.value ?? props.value_short ?? props.name ?? props.label;
+                if (code != null) map[code] = val ?? props;
+            }
+            return map;
+        }
+        return parsed;
+    } catch (err) {
+        return {};
+    }
+}
+
+// -----------------------------
+// Nodes loader (streamed, relatively small compared to edges)
+// -----------------------------
+async function loadNodesIfNeeded() {
+    if (nodesById) return nodesById;
+    nodesById = new Map();
+
+    if (!fs.existsSync(BN_NODE_PATH)) {
+        // file missing — we'll continue without nodes
+        return nodesById;
+    }
+
+    await new Promise((resolve, reject) => {
+        fs.createReadStream(BN_NODE_PATH)
+            .pipe(parser())
+            .pipe(pick({ filter: "features" }))
+            .pipe(streamArray())
+            .on("data", ({ value }) => {
+                try {
+                    const props = value.properties || {};
+                    const objectId = props.object_id || props.id;
+                    if (!objectId) return;
+                    const coords = value.geometry && value.geometry.coordinates;
+                    if (!coords || coords.length < 2) return;
+                    const [E, N] = coords;
+                    const [lon, lat] = lv95ToWgs84(E, N);
+                    nodesById.set(objectId, { coord: [lon, lat], props });
+                } catch (e) {
+                    // ignore malformed node
+                }
+            })
+            .on("end", resolve)
+            .on("error", reject);
+    });
+
+    return nodesById;
+}
+
+// -----------------------------
+// Build local index (streams bn_edge and inserts edges that intersect bbox)
+// -----------------------------
 async function buildIndexForBBox(bbox, baseType) {
     const index = GeoJSONRbush();
-
     await new Promise((resolve, reject) => {
         fs.createReadStream(BN_EDGE_PATH)
             .pipe(parser())
@@ -75,16 +194,22 @@ async function buildIndexForBBox(bbox, baseType) {
             .on("data", ({ value }) => {
                 try {
                     const props = value.properties || {};
-                    const bt = props.basetype || 1;
+                    const bt = props.basetype ?? props.base_type ?? 1;
                     if (bt !== baseType) return;
 
-                    // Transform coordinates from LV95 (EPSG:2056) to WGS84 and compute bbox in WGS84
                     const srcCoords = value.geometry && value.geometry.coordinates;
                     if (!srcCoords || srcCoords.length === 0) return;
+
+                    // transform LV95 -> WGS84 and compute bbox in WGS84
                     const llCoords = [];
-                    let eMinX = Infinity, eMinY = Infinity, eMaxX = -Infinity, eMaxY = -Infinity;
+                    let eMinX = Infinity,
+                        eMinY = Infinity,
+                        eMaxX = -Infinity,
+                        eMaxY = -Infinity;
                     for (const c of srcCoords) {
-                        const [E, N] = c; // ignore Z
+                        // Some features might include Z; ignore it
+                        const E = c[0];
+                        const N = c[1];
                         const [lon, lat] = lv95ToWgs84(E, N);
                         llCoords.push([lon, lat]);
                         if (lon < eMinX) eMinX = lon;
@@ -95,8 +220,12 @@ async function buildIndexForBBox(bbox, baseType) {
                     const edgeBBox = [eMinX, eMinY, eMaxX, eMaxY];
                     if (!bboxIntersects(bbox, edgeBBox)) return;
 
-                    // Insert minimal Feature (avoid extra turf allocations)
-                    index.insert({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: llCoords } });
+                    // Minimal feature to insert
+                    index.insert({
+                        type: "Feature",
+                        properties: props,
+                        geometry: { type: "LineString", coordinates: llCoords },
+                    });
                 } catch (_) {
                     // ignore malformed features
                 }
@@ -108,56 +237,56 @@ async function buildIndexForBBox(bbox, baseType) {
     return index;
 }
 
-function roundCoord(val, precision = 1) { // 1 decimal ~ 11km
-    const p = Math.pow(10, precision);
-    return Math.round(val * p) / p;
+// -----------------------------
+// Global index loader (optional, memory heavy but faster)
+// -----------------------------
+async function loadGlobalBaseTypeIndex(baseType) {
+    if (globalIndexByBaseType.has(baseType)) return globalIndexByBaseType.get(baseType);
+
+    const index = GeoJSONRbush();
+    await new Promise((resolve, reject) => {
+        fs.createReadStream(BN_EDGE_PATH)
+            .pipe(parser())
+            .pipe(pick({ filter: "features" }))
+            .pipe(streamArray())
+            .on("data", ({ value }) => {
+                try {
+                    const props = value.properties || {};
+                    const bt = props.basetype ?? props.base_type ?? 1;
+                    if (bt !== baseType) return;
+
+                    const srcCoords = value.geometry && value.geometry.coordinates;
+                    if (!srcCoords || srcCoords.length === 0) return;
+                    const llCoords = srcCoords.map((c) => {
+                        const [E, N] = c;
+                        const [lon, lat] = lv95ToWgs84(E, N);
+                        return [lon, lat];
+                    });
+                    index.insert({
+                        type: "Feature",
+                        properties: props,
+                        geometry: { type: "LineString", coordinates: llCoords },
+                    });
+                } catch (_) {}
+            })
+            .on("end", resolve)
+            .on("error", reject);
+    });
+
+    globalIndexByBaseType.set(baseType, index);
+    return index;
 }
 
-function makeCacheKey(baseType, orderedStops, bufferKm = 2, cellSizeDeg = 0.25) {
-    // key by baseType + snapped tile center indexes
-    let sumLat = 0, sumLon = 0;
-    for (const s of orderedStops) { sumLat += s.stop_lat; sumLon += s.stop_lon; }
-    const cy = sumLat / orderedStops.length;
-    const cx = sumLon / orderedStops.length;
-    const ix = Math.round(cx / cellSizeDeg);
-    const iy = Math.round(cy / cellSizeDeg);
-    return [baseType, ix, iy, cellSizeDeg, bufferKm].join(':');
-}
-
-async function getCachedLocalIndex(baseType, orderedStops, bufferKm = 2, cellSizeDeg = 0.5) {
-    const key = makeCacheKey(baseType, orderedStops, bufferKm, cellSizeDeg);
-    if (localIndexCache.has(key)) {
-        const entry = localIndexCache.get(key);
-        // refresh LRU by reinserting
-        localIndexCache.delete(key);
-        localIndexCache.set(key, entry);
-        return entry.index;
-    }
-
-    const tileBBox = computeTileBBoxFromStops(orderedStops, cellSizeDeg, bufferKm);
-    const idx = await buildIndexForBBox(tileBBox, baseType);
-    localIndexCache.set(key, { index: idx, bbox: tileBBox });
-    if (localIndexCache.size > MAX_CACHE_SIZE) {
-        // evict oldest
-        const firstKey = localIndexCache.keys().next().value;
-        localIndexCache.delete(firstKey);
-    }
-    return idx;
-}
-
-/**
- * Find nearest edge using the R-tree index
- */
+// -----------------------------
+// Spatial lookup: nearest edge around point using rbush index
+// -----------------------------
 function findNearestEdge(point, index) {
-    // Numeric bbox around point with ~200m radius (fast, avoids turf.buffer/bboxPolygon allocations)
     const [lon, lat] = point.geometry.coordinates;
-    const radiusKm = 0.2; // 200 m
+    const radiusKm = 0.2; // search box ~200m
     const dLat = radiusKm / 111;
-    const dLon = dLat / Math.max(Math.cos(lat * Math.PI / 180), 0.1);
+    const dLon = dLat / Math.max(Math.cos((lat * Math.PI) / 180), 0.1);
     const searchBBox = [lon - dLon, lat - dLat, lon + dLon, lat + dLat];
-
     const candidates = index.search(searchBBox);
-
     let nearest = null;
     let minDist = Infinity;
 
@@ -169,93 +298,309 @@ function findNearestEdge(point, index) {
         }
     }
 
+    // If nothing found in small radius, expand search (cheap fallback)
+    if (!nearest) {
+        // enlarge to ~2km
+        const r2 = 2;
+        const dLat2 = r2 / 111;
+        const dLon2 = dLat2 / Math.max(Math.cos((lat * Math.PI) / 180), 0.1);
+        const searchBBox2 = [lon - dLon2, lat - dLat2, lon + dLon2, lat + dLat2];
+        const candidates2 = index.search(searchBBox2);
+        for (const edge of (candidates2.features || candidates2)) {
+            const dist = turf.pointToLineDistance(point, edge, { units: "meters" });
+            if (dist < minDist) {
+                minDist = dist;
+                nearest = edge;
+            }
+        }
+    }
+
     return nearest;
 }
 
+// -----------------------------
+// Main function: buildGeometryFromSwissTNE
+// -----------------------------
 /**
- * Build geometry by snapping stops to nearest edges (fast via spatial index)
+ * orderedStops: [{ stop_id, stop_lat, stop_lon, stop_sequence }]
+ * routeType: GTFS route_type numeric (string/number)
+ *
+ * returns: Array<[lon, lat]> (LineString coordinates)
  */
-async function loadGlobalBaseTypeIndex(baseType) {
-    if (globalIndexByBaseType.has(baseType)) return globalIndexByBaseType.get(baseType);
-    const index = GeoJSONRbush();
-    await new Promise((resolve, reject) => {
-        fs.createReadStream(BN_EDGE_PATH)
-            .pipe(parser())
-            .pipe(pick({ filter: "features" }))
-            .pipe(streamArray())
-            .on("data", ({ value }) => {
-                try {
-                    const props = value.properties || {};
-                    const bt = props.basetype || 1;
-                    if (bt !== baseType) return;
-                    const srcCoords = value.geometry && value.geometry.coordinates;
-                    if (!srcCoords || srcCoords.length === 0) return;
-                    const llCoords = srcCoords.map(c => {
-                        const [E, N] = c;
-                        const [lon, lat] = lv95ToWgs84(E, N);
-                        return [lon, lat];
-                    });
-                    index.insert({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: llCoords } });
-                } catch (_) {}
-            })
-            .on("end", resolve)
-            .on("error", reject);
-    });
-    globalIndexByBaseType.set(baseType, index);
-    return index;
-}
-
 async function buildGeometryFromSwissTNE(orderedStops, routeType) {
     if (!orderedStops || orderedStops.length < 2) return [];
 
-    const baseType = getBaseTypeForRoute(routeType);
+    // lazy-load small LUTs and nodes
+    if (!lutBaseType) lutBaseType = tryLoadLUT(LUT_BASETYPE_PATH);
+    if (!lutAreaType) lutAreaType = tryLoadLUT(LUT_AREATYPE_PATH);
+    if (!lutQualityStatus) lutQualityStatus = tryLoadLUT(LUT_QUALITYSTATUS_PATH);
+    await loadNodesIfNeeded(); // nodesById may remain an empty Map if file absent
 
-    // Default to local per-tile index to avoid OOM. Opt-in to global index with SWISSTNE_GLOBAL_INDEX=1
-    const useGlobal = process.env.SWISSTNE_GLOBAL_INDEX === '1';
-    const index = useGlobal
-        ? await loadGlobalBaseTypeIndex(baseType)
-        : await getCachedLocalIndex(baseType, orderedStops, 2);
+    const baseType = getBaseTypeForRoute(routeType);
+    const useGlobal = process.env.SWISSTNE_GLOBAL_INDEX === "1";
+    const corridorKm = Math.max(0.3, parseFloat(getCorridorKmForRoute(routeType)));
+    const maxNodes = parseInt(process.env.SWISSTNE_MAX_NODES || '20000', 10);
+    const DEBUG = process.env.SWISSTNE_DEBUG === '1';
+
+    const index = useGlobal ? await loadGlobalBaseTypeIndex(baseType) : await getCachedLocalIndex(baseType, orderedStops, corridorKm);
     if (!index) {
-        // fallback: straight line
-        return orderedStops.map(s => [s.stop_lon, s.stop_lat]);
+        // fallback: straight lines
+        return orderedStops.map((s) => [s.stop_lon, s.stop_lat]);
     }
 
-    const mergedCoords = [];
-    const seenEdges = new Set();
+    const outCoords = [];
 
-    // Precompute nearest edges for stops
-    const nearestEdges = orderedStops.map(s => {
-        const point = turf.point([s.stop_lon, s.stop_lat]);
-        return findNearestEdge(point, index);
-    });
+    // Helper: compute corridor bbox around two stops in WGS84
+    function makeCorridorBBox(a, b, bufKm) {
+        const line = turf.lineString([
+            [a.stop_lon, a.stop_lat],
+            [b.stop_lon, b.stop_lat]
+        ]);
+        const buffered = turf.buffer(line, bufKm, { units: 'kilometers' });
+        return turf.bbox(buffered);
+    }
 
-    // Merge coordinates for consecutive stops
-    for (let i = 0; i < nearestEdges.length - 1; i++) {
-        const edgesToUse = [nearestEdges[i], nearestEdges[i + 1]];
-        for (const edge of edgesToUse) {
-            if (!edge) continue;
-            const edgeId = edge.properties.object_id || `${edge.geometry.coordinates[0]}-${edge.geometry.coordinates.slice(-1)}`;
-            if (seenEdges.has(edgeId)) continue;
-            seenEdges.add(edgeId);
+    // Helper: build graph from edges returned by rbush search
+    function buildGraph(candidates) {
+        const graph = new Map(); // nodeId -> Array<{to, edgeId, weight}>
+        const edgeById = new Map();
+        const degree = new Map(); // nodeId -> degree count
+        const modeFactor = 1.0; // future hook: differentiate per basetype if needed
+        const connectorPenaltyKm = parseFloat(process.env.SWISSTNE_PENALTY_CONNECTOR_KM || '0.5');
+        const qualityPenaltyKm = parseFloat(process.env.SWISSTNE_PENALTY_QLT2_KM || '0.1');
 
-            for (const coord of edge.geometry.coordinates) {
-                const last = mergedCoords[mergedCoords.length - 1];
-                if (!last || last[0] !== coord[0] || last[1] !== coord[1]) {
-                    mergedCoords.push(coord);
-                }
+        for (const f of (candidates.features || candidates)) {
+            const props = f.properties || {};
+            const fromId = props.from_node_object_id || props.from_node || props.from;
+            const toId = props.to_node_object_id || props.to_node || props.to;
+            if (!fromId || !toId) continue;
+            const coords = f.geometry && f.geometry.coordinates;
+            if (!coords || coords.length < 2) continue;
+            const eid = props.object_id || props.id || `${fromId}->${toId}:${coords[0]}:${coords[coords.length-1]}`;
+            edgeById.set(eid, f);
+
+            // base weight = geometric length
+            let w = turf.length(turf.lineString(coords), { units: 'kilometers' }) * modeFactor;
+            // penalties from documentation attributes
+            const isConnector = props.connector === true || props.connector === 1 || props.connector === '1';
+            if (isConnector && connectorPenaltyKm > 0) w += connectorPenaltyKm;
+            const q = props.quality_status ?? props.quality ?? null;
+            if (q === 2 || q === '2') w += qualityPenaltyKm;
+
+            if (!graph.has(fromId)) graph.set(fromId, []);
+            if (!graph.has(toId)) graph.set(toId, []);
+            graph.get(fromId).push({ to: toId, edgeId: eid, weight: w });
+            graph.get(toId).push({ to: fromId, edgeId: eid, weight: w }); // assume bidirectional for base network
+
+            degree.set(fromId, (degree.get(fromId) || 0) + 1);
+            degree.set(toId, (degree.get(toId) || 0) + 1);
+        }
+        return { graph, edgeById, degree };
+    }
+
+    // Helper: snap stop to nearest edge within bbox; return nearest endpoint nodeId
+    function snapStopToNode(stop, bbox, degreeMap) {
+        const pt = turf.point([stop.stop_lon, stop.stop_lat]);
+        const candidates = index.search(bbox);
+        let best = null;
+        let minDist = Infinity;
+        for (const e of (candidates.features || candidates)) {
+            const d = turf.pointToLineDistance(pt, e, { units: 'meters' });
+            if (d < minDist) {
+                minDist = d;
+                best = e;
             }
         }
+        if (!best) return { nodeId: null, edge: null };
+        const props = best.properties || {};
+        const fromId = props.from_node_object_id || props.from_node || props.from;
+        const toId = props.to_node_object_id || props.to_node || props.to;
+        if (!fromId || !toId) return { nodeId: null, edge: null };
+        // choose closer endpoint, but bias to higher-degree node if distances are very close
+        const coords = best.geometry.coordinates;
+        const p0 = turf.point(coords[0]);
+        const p1 = turf.point(coords[coords.length - 1]);
+        const d0 = turf.distance(pt, p0, { units: 'meters' });
+        const d1 = turf.distance(pt, p1, { units: 'meters' });
+        let nodeId = d0 <= d1 ? fromId : toId;
+        const nearEqual = Math.abs(d0 - d1) <= 5; // within 5m
+        if (degreeMap && nearEqual) {
+            const deg0 = degreeMap.get(fromId) || 0;
+            const deg1 = degreeMap.get(toId) || 0;
+            if (deg1 > deg0) nodeId = toId;
+            else nodeId = fromId;
+        }
+        return { nodeId, edge: best };
+    }
 
-        // Fallback if edges missing
-        if (!nearestEdges[i] || !nearestEdges[i + 1]) {
-            mergedCoords.push([orderedStops[i].stop_lon, orderedStops[i].stop_lat]);
-            mergedCoords.push([orderedStops[i + 1].stop_lon, orderedStops[i + 1].stop_lat]);
+    // Dijkstra over node graph
+    function dijkstra(graph, start, goal) {
+        const dist = new Map();
+        const prev = new Map(); // node -> {node, viaEdgeId}
+        const visited = new Set();
+        const pq = [];
+        function push(node, d) {
+            pq.push({ node, d });
+            pq.sort((a, b) => a.d - b.d);
+        }
+        for (const key of graph.keys()) dist.set(key, Infinity);
+        dist.set(start, 0);
+        push(start, 0);
+        let expansions = 0;
+        while (pq.length) {
+            const { node } = pq.shift();
+            if (visited.has(node)) continue;
+            visited.add(node);
+            if (node === goal) break;
+            const neigh = graph.get(node) || [];
+            for (const { to, edgeId, weight } of neigh) {
+                const alt = dist.get(node) + weight;
+                if (alt < (dist.get(to) ?? Infinity)) {
+                    dist.set(to, alt);
+                    prev.set(to, { node, viaEdgeId: edgeId });
+                    push(to, alt);
+                }
+            }
+            expansions++;
+            if (maxNodes && expansions > maxNodes) break;
+        }
+        if (!prev.has(goal)) return null;
+        // reconstruct node path as sequence of edgeIds
+        const edgeIds = [];
+        let cur = goal;
+        while (cur !== start) {
+            const info = prev.get(cur);
+            if (!info) break;
+            edgeIds.push(info.viaEdgeId);
+            cur = info.node;
+        }
+        edgeIds.reverse();
+        return edgeIds;
+    }
+
+    // Append coordinates of an edge with direction and deduplicate
+    function appendEdgeCoords(edge, fromNodeId, toNodeId, acc) {
+        const props = edge.properties || {};
+        const edgeFrom = props.from_node_object_id || props.from_node || props.from;
+        const edgeTo = props.to_node_object_id || props.to_node || props.to;
+        let coords = edge.geometry.coordinates;
+        if (edgeFrom && edgeTo && fromNodeId && toNodeId) {
+            const forward = edgeFrom === fromNodeId && edgeTo === toNodeId;
+            const backward = edgeFrom === toNodeId && edgeTo === fromNodeId;
+            if (backward) coords = [...coords].reverse();
+        }
+        for (const c of coords) {
+            const last = acc[acc.length - 1];
+            if (!last || last[0] !== c[0] || last[1] !== c[1]) acc.push(c);
         }
     }
 
-    return mergedCoords;
+    for (let i = 0; i < orderedStops.length - 1; i++) {
+        const a = orderedStops[i];
+        const b = orderedStops[i + 1];
+        let bbox = makeCorridorBBox(a, b, corridorKm);
+        let attempt = 0;
+        let succeeded = false;
+        while (attempt < 3 && !succeeded) {
+            const candidates = index.search(bbox);
+            if (!candidates || (candidates.features || candidates).length === 0) {
+                // widen corridor a bit and retry
+                attempt++;
+                bbox = makeCorridorBBox(a, b, corridorKm * (1 + 0.5 * attempt));
+                continue;
+            }
+            const { graph, edgeById } = buildGraph(candidates);
+            const snapA = snapStopToNode(a, bbox);
+            const snapB = snapStopToNode(b, bbox);
+            if (!snapA.nodeId || !snapB.nodeId) {
+                attempt++;
+                bbox = makeCorridorBBox(a, b, corridorKm * (1 + 0.5 * attempt));
+                continue;
+            }
+            const pathEdgeIds = dijkstra(graph, snapA.nodeId, snapB.nodeId);
+            if (pathEdgeIds && pathEdgeIds.length) {
+                // concatenate edges in order
+                let prevNode = snapA.nodeId;
+                for (const eid of pathEdgeIds) {
+                    const e = edgeById.get(eid);
+                    if (!e) continue;
+                    const props = e.properties || {};
+                    const ef = props.from_node_object_id || props.from_node || props.from;
+                    const et = props.to_node_object_id || props.to_node || props.to;
+                    const nextNode = prevNode === ef ? et : ef;
+                    appendEdgeCoords(e, prevNode, nextNode, outCoords);
+                    prevNode = nextNode;
+                }
+                succeeded = true;
+                break;
+            } else {
+                attempt++;
+                bbox = makeCorridorBBox(a, b, corridorKm * (1 + 0.5 * attempt));
+            }
+        }
+        if (!succeeded) {
+            // fallback: connect by nearest edge geometries around each stop; as last resort straight segment
+            const pta = turf.point([a.stop_lon, a.stop_lat]);
+            const ptb = turf.point([b.stop_lon, b.stop_lat]);
+            const ea = findNearestEdge(pta, index);
+            const eb = findNearestEdge(ptb, index);
+            if (ea) appendEdgeCoords(ea, null, null, outCoords);
+            if (eb) appendEdgeCoords(eb, null, null, outCoords);
+            if (!ea && !eb) {
+                // straight line
+                const last = outCoords[outCoords.length - 1];
+                const segStart = [a.stop_lon, a.stop_lat];
+                const segEnd = [b.stop_lon, b.stop_lat];
+                if (!last || last[0] !== segStart[0] || last[1] !== segStart[1]) outCoords.push(segStart);
+                outCoords.push(segEnd);
+            }
+        }
+    }
+
+    if (outCoords.length === 0) return orderedStops.map((s) => [s.stop_lon, s.stop_lat]);
+    return outCoords;
 }
 
+// -----------------------------
+// Cache helper (build or load local index for tile)
+// -----------------------------
+async function getCachedLocalIndex(baseType, orderedStops, bufferKm = 2, cellSizeDeg = 0.5) {
+    const key = makeCacheKey(baseType, orderedStops, bufferKm, cellSizeDeg);
+    if (localIndexCache.has(key)) {
+        touchCacheEntry(key);
+        return localIndexCache.get(key).index;
+    }
+
+    const tileBBox = computeTileBBoxFromStops(orderedStops, cellSizeDeg, bufferKm);
+    const idx = await buildIndexForBBox(tileBBox, baseType);
+    localIndexCache.set(key, { index: idx, bbox: tileBBox, ts: Date.now() });
+
+    // Evict oldest when cache grown
+    if (localIndexCache.size > MAX_CACHE_SIZE) {
+        let oldestKey = null;
+        let oldestTs = Infinity;
+        for (const [k, v] of localIndexCache.entries()) {
+            if (v.ts < oldestTs) {
+                oldestTs = v.ts;
+                oldestKey = k;
+            }
+        }
+        if (oldestKey) localIndexCache.delete(oldestKey);
+    }
+
+    return idx;
+}
+
+// -----------------------------
+// Exports
+// -----------------------------
 module.exports = {
-    buildGeometryFromSwissTNE
+    buildGeometryFromSwissTNE,
+    // export helpers so tests / other code can optionally pre-warm caches
+    _internal: {
+        loadNodesIfNeeded,
+        loadGlobalBaseTypeIndex,
+        getCachedLocalIndex,
+        tryLoadLUT,
+    },
 };
