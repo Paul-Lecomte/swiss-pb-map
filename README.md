@@ -209,7 +209,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 - [x] MongoDB save & update
 - [x] Real-time GTFSRT integration
 - [x] Implementation of stable openmaptile generation
-- [ ] Just showing stops on map bz clusters based on the camera position and zoom level
+- [x] Just showing stops on map bz clusters based on the camera position and zoom level
 - [ ] Interactive map with routes and stops
 - [ ] Link stops with routes and timetables
 - [ ] Optimal route planning (C++ algorithm)
