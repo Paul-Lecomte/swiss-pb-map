@@ -1,4 +1,4 @@
-// swisstneHelper.js
+// Routes will resolved to straight path outisde of switzerland
 const path = require("path");
 const fs = require("fs");
 const turf = require("@turf/turf");
@@ -292,11 +292,11 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
     const baseType = getBaseTypeForRoute(routeType);
     const useGlobal = process.env.SWISSTNE_GLOBAL_INDEX === "1";
     const corridorKm = Math.max(0.3, parseFloat(getCorridorKmForRoute(routeType)));
-    const maxNodes = parseInt(process.env.SWISSTNE_MAX_NODES || '20000', 10);
-    const hardMaxNodes = parseInt(process.env.SWISSTNE_MAX_NODES_HARD || '150000', 10);
+    const maxNodes = parseInt(process.env.SWISSTNE_MAX_NODES || '200000', 10);
+    const hardMaxNodes = parseInt(process.env.SWISSTNE_MAX_NODES_HARD || '1500000', 10);
     const DEBUG = process.env.SWISSTNE_DEBUG === '1';
     const NO_LIMITS = process.env.SWISSTNE_NO_LIMITS === '1';
-    const maxCandidates = NO_LIMITS ? Infinity : parseInt(process.env.SWISSTNE_MAX_CANDIDATES || '1200', 10);
+    const maxCandidates = NO_LIMITS ? Infinity : parseInt(process.env.SWISSTNE_MAX_CANDIDATES || '12000', 10);
 
     // dynamic scaling knobs
     const dynamicScaleOn = process.env.SWISSTNE_DYNAMIC_SCALE === '1';
@@ -306,10 +306,10 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
     // per-mode maximum corridor
     function getMaxCorridorKm(baseType) {
         if (NO_LIMITS) return Number.POSITIVE_INFINITY;
-        const envRoad = parseFloat(process.env.SWISSTNE_MAX_CORRIDOR_KM_ROAD || '25');
-        const envRail = parseFloat(process.env.SWISSTNE_MAX_CORRIDOR_KM_RAIL || '25');
-        const envCable = parseFloat(process.env.SWISSTNE_MAX_CORRIDOR_KM_CABLE || '25');
-        const envWater = parseFloat(process.env.SWISSTNE_MAX_CORRIDOR_KM_WATER || '25');
+        const envRoad = parseFloat(process.env.SWISSTNE_MAX_CORRIDOR_KM_ROAD || '2500');
+        const envRail = parseFloat(process.env.SWISSTNE_MAX_CORRIDOR_KM_RAIL || '2500');
+        const envCable = parseFloat(process.env.SWISSTNE_MAX_CORRIDOR_KM_CABLE || '2500');
+        const envWater = parseFloat(process.env.SWISSTNE_MAX_CORRIDOR_KM_WATER || '2500');
         if (baseType === 2) return envRail;
         if (baseType === 4) return envWater;
         if (baseType === 3) return envCable;
