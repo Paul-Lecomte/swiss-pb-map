@@ -53,22 +53,18 @@ function getBaseTypeForRoute(routeType) {
 // Per-mode defaults and env overrides for corridor width (km)
 function getCorridorKmForRoute(routeType) {
     const t = parseInt(routeType, 10);
-    // Allow broad override
     const globalOverride = process.env.SWISSTNE_CORRIDOR_KM && parseFloat(process.env.SWISSTNE_CORRIDOR_KM);
-    // Per-mode overrides from env
     const envRoad = process.env.SWISSTNE_CORRIDOR_KM_ROAD && parseFloat(process.env.SWISSTNE_CORRIDOR_KM_ROAD);
     const envRail = process.env.SWISSTNE_CORRIDOR_KM_RAIL && parseFloat(process.env.SWISSTNE_CORRIDOR_KM_RAIL);
     const envCable = process.env.SWISSTNE_CORRIDOR_KM_CABLE && parseFloat(process.env.SWISSTNE_CORRIDOR_KM_CABLE);
     const envWater = process.env.SWISSTNE_CORRIDOR_KM_WATER && parseFloat(process.env.SWISSTNE_CORRIDOR_KM_WATER);
 
-    // Sensible defaults (km)
     const dRoad = 0.8;
     const dRail = 1.5;
     const dCable = 0.6;
     const dWater = 2.5;
 
     if (!Number.isNaN(globalOverride) && globalOverride > 0.1) return globalOverride;
-
     if ([2, 101, 102, 103, 105, 106, 107, 109, 116, 117].includes(t)) return !Number.isNaN(envRail) && envRail > 0 ? envRail : dRail;
     if (t === 4) return !Number.isNaN(envWater) && envWater > 0 ? envWater : dWater;
     if ([5, 6, 7, 1400].includes(t)) return !Number.isNaN(envCable) && envCable > 0 ? envCable : dCable;
@@ -80,8 +76,7 @@ function bboxIntersects(a, b) {
 }
 
 function makeCacheKey(baseType, orderedStops, bufferKm = 2, cellSizeDeg = 0.5) {
-    let sumLat = 0,
-        sumLon = 0;
+    let sumLat = 0, sumLon = 0;
     for (const s of orderedStops) {
         sumLat += s.stop_lat;
         sumLon += s.stop_lon;
@@ -94,8 +89,7 @@ function makeCacheKey(baseType, orderedStops, bufferKm = 2, cellSizeDeg = 0.5) {
 }
 
 function computeTileBBoxFromStops(orderedStops, cellSizeDeg = 0.25, bufferKm = 2) {
-    let sumLat = 0,
-        sumLon = 0;
+    let sumLat = 0, sumLon = 0;
     for (const s of orderedStops) {
         sumLat += s.stop_lat;
         sumLon += s.stop_lon;
@@ -108,7 +102,6 @@ function computeTileBBoxFromStops(orderedStops, cellSizeDeg = 0.25, bufferKm = 2
     return [bbox[0] - delta, bbox[1] - delta, bbox[2] + delta, bbox[3] + delta];
 }
 
-// Simple LRU housekeeping for localIndexCache
 function touchCacheEntry(key) {
     const entry = localIndexCache.get(key);
     if (!entry) return;
@@ -118,19 +111,17 @@ function touchCacheEntry(key) {
 }
 
 // -----------------------------
-// Small LUT loaders (likely small files)
+// Small LUT loaders
 // -----------------------------
 function tryLoadLUT(filePath) {
     try {
         if (!fs.existsSync(filePath)) return {};
         const raw = fs.readFileSync(filePath, "utf8");
-        // many LUT exports are small FeatureCollections; try parse and reduce
         const parsed = JSON.parse(raw);
         const map = {};
         if (parsed && Array.isArray(parsed.features)) {
             for (const f of parsed.features) {
                 const props = f.properties || {};
-                // common keys: object_key/code and value/value_short - handle variability
                 const code = props.object_key ?? props.code ?? props.key ?? props.id;
                 const val = props.value ?? props.value_short ?? props.name ?? props.label;
                 if (code != null) map[code] = val ?? props;
@@ -138,22 +129,17 @@ function tryLoadLUT(filePath) {
             return map;
         }
         return parsed;
-    } catch (err) {
-        return {};
-    }
+    } catch (err) { return {}; }
 }
 
 // -----------------------------
-// Nodes loader (streamed, relatively small compared to edges)
+// Nodes loader
 // -----------------------------
 async function loadNodesIfNeeded() {
     if (nodesById) return nodesById;
     nodesById = new Map();
 
-    if (!fs.existsSync(BN_NODE_PATH)) {
-        // file missing — we'll continue without nodes
-        return nodesById;
-    }
+    if (!fs.existsSync(BN_NODE_PATH)) return nodesById;
 
     await new Promise((resolve, reject) => {
         fs.createReadStream(BN_NODE_PATH)
@@ -170,9 +156,7 @@ async function loadNodesIfNeeded() {
                     const [E, N] = coords;
                     const [lon, lat] = lv95ToWgs84(E, N);
                     nodesById.set(objectId, { coord: [lon, lat], props });
-                } catch (e) {
-                    // ignore malformed node
-                }
+                } catch {}
             })
             .on("end", resolve)
             .on("error", reject);
@@ -182,7 +166,7 @@ async function loadNodesIfNeeded() {
 }
 
 // -----------------------------
-// Build local index (streams bn_edge and inserts edges that intersect bbox)
+// Build local index
 // -----------------------------
 async function buildIndexForBBox(bbox, baseType) {
     const index = GeoJSONRbush();
@@ -200,45 +184,31 @@ async function buildIndexForBBox(bbox, baseType) {
                     const srcCoords = value.geometry && value.geometry.coordinates;
                     if (!srcCoords || srcCoords.length === 0) return;
 
-                    // transform LV95 -> WGS84 and compute bbox in WGS84
                     const llCoords = [];
-                    let eMinX = Infinity,
-                        eMinY = Infinity,
-                        eMaxX = -Infinity,
-                        eMaxY = -Infinity;
+                    let eMinX = Infinity, eMinY = Infinity, eMaxX = -Infinity, eMaxY = -Infinity;
                     for (const c of srcCoords) {
-                        // Some features might include Z; ignore it
-                        const E = c[0];
-                        const N = c[1];
+                        const [E, N] = c;
                         const [lon, lat] = lv95ToWgs84(E, N);
                         llCoords.push([lon, lat]);
-                        if (lon < eMinX) eMinX = lon;
-                        if (lon > eMaxX) eMaxX = lon;
-                        if (lat < eMinY) eMinY = lat;
-                        if (lat > eMaxY) eMaxY = lat;
+                        eMinX = Math.min(eMinX, lon);
+                        eMaxX = Math.max(eMaxX, lon);
+                        eMinY = Math.min(eMinY, lat);
+                        eMaxY = Math.max(eMaxY, lat);
                     }
                     const edgeBBox = [eMinX, eMinY, eMaxX, eMaxY];
                     if (!bboxIntersects(bbox, edgeBBox)) return;
 
-                    // Minimal feature to insert
-                    index.insert({
-                        type: "Feature",
-                        properties: props,
-                        geometry: { type: "LineString", coordinates: llCoords },
-                    });
-                } catch (_) {
-                    // ignore malformed features
-                }
+                    index.insert({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: llCoords } });
+                } catch {}
             })
             .on("end", resolve)
             .on("error", reject);
     });
-
     return index;
 }
 
 // -----------------------------
-// Global index loader (optional, memory heavy but faster)
+// Global index loader
 // -----------------------------
 async function loadGlobalBaseTypeIndex(baseType) {
     if (globalIndexByBaseType.has(baseType)) return globalIndexByBaseType.get(baseType);
@@ -257,17 +227,9 @@ async function loadGlobalBaseTypeIndex(baseType) {
 
                     const srcCoords = value.geometry && value.geometry.coordinates;
                     if (!srcCoords || srcCoords.length === 0) return;
-                    const llCoords = srcCoords.map((c) => {
-                        const [E, N] = c;
-                        const [lon, lat] = lv95ToWgs84(E, N);
-                        return [lon, lat];
-                    });
-                    index.insert({
-                        type: "Feature",
-                        properties: props,
-                        geometry: { type: "LineString", coordinates: llCoords },
-                    });
-                } catch (_) {}
+                    const llCoords = srcCoords.map(c => lv95ToWgs84(c[0], c[1]));
+                    index.insert({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: llCoords } });
+                } catch {}
             })
             .on("end", resolve)
             .on("error", reject);
@@ -278,11 +240,11 @@ async function loadGlobalBaseTypeIndex(baseType) {
 }
 
 // -----------------------------
-// Spatial lookup: nearest edge around point using rbush index
+// Nearest edge lookup
 // -----------------------------
 function findNearestEdge(point, index) {
     const [lon, lat] = point.geometry.coordinates;
-    const radiusKm = 0.2; // search box ~200m
+    const radiusKm = 0.2;
     const dLat = radiusKm / 111;
     const dLon = dLat / Math.max(Math.cos((lat * Math.PI) / 180), 0.1);
     const searchBBox = [lon - dLon, lat - dLat, lon + dLon, lat + dLat];
@@ -298,9 +260,7 @@ function findNearestEdge(point, index) {
         }
     }
 
-    // If nothing found in small radius, expand search (cheap fallback)
     if (!nearest) {
-        // enlarge to ~2km
         const r2 = 2;
         const dLat2 = r2 / 111;
         const dLon2 = dLat2 / Math.max(Math.cos((lat * Math.PI) / 180), 0.1);
@@ -321,35 +281,47 @@ function findNearestEdge(point, index) {
 // -----------------------------
 // Main function: buildGeometryFromSwissTNE
 // -----------------------------
-/**
- * orderedStops: [{ stop_id, stop_lat, stop_lon, stop_sequence }]
- * routeType: GTFS route_type numeric (string/number)
- *
- * returns: Array<[lon, lat]> (LineString coordinates)
- */
 async function buildGeometryFromSwissTNE(orderedStops, routeType) {
     if (!orderedStops || orderedStops.length < 2) return [];
 
-    // lazy-load small LUTs and nodes
     if (!lutBaseType) lutBaseType = tryLoadLUT(LUT_BASETYPE_PATH);
     if (!lutAreaType) lutAreaType = tryLoadLUT(LUT_AREATYPE_PATH);
     if (!lutQualityStatus) lutQualityStatus = tryLoadLUT(LUT_QUALITYSTATUS_PATH);
-    await loadNodesIfNeeded(); // nodesById may remain an empty Map if file absent
+    await loadNodesIfNeeded();
 
     const baseType = getBaseTypeForRoute(routeType);
     const useGlobal = process.env.SWISSTNE_GLOBAL_INDEX === "1";
     const corridorKm = Math.max(0.3, parseFloat(getCorridorKmForRoute(routeType)));
     const maxNodes = parseInt(process.env.SWISSTNE_MAX_NODES || '20000', 10);
+    const hardMaxNodes = parseInt(process.env.SWISSTNE_MAX_NODES_HARD || '150000', 10);
     const DEBUG = process.env.SWISSTNE_DEBUG === '1';
+    const NO_LIMITS = process.env.SWISSTNE_NO_LIMITS === '1';
+    const maxCandidates = NO_LIMITS ? Infinity : parseInt(process.env.SWISSTNE_MAX_CANDIDATES || '1200', 10);
 
-    const index = useGlobal ? await loadGlobalBaseTypeIndex(baseType) : await getCachedLocalIndex(baseType, orderedStops, corridorKm);
-    if (!index) {
-        // fallback: straight lines
-        return orderedStops.map((s) => [s.stop_lon, s.stop_lat]);
+    // dynamic scaling knobs
+    const dynamicScaleOn = process.env.SWISSTNE_DYNAMIC_SCALE === '1';
+    const scaleK = parseFloat(process.env.SWISSTNE_DYNAMIC_SCALE_K || '0.3');
+    const widenFactor = parseFloat(process.env.SWISSTNE_WIDEN_FACTOR || '1.0');
+
+    // per-mode maximum corridor
+    function getMaxCorridorKm(baseType) {
+        if (NO_LIMITS) return Number.POSITIVE_INFINITY;
+        const envRoad = parseFloat(process.env.SWISSTNE_MAX_CORRIDOR_KM_ROAD || '25');
+        const envRail = parseFloat(process.env.SWISSTNE_MAX_CORRIDOR_KM_RAIL || '25');
+        const envCable = parseFloat(process.env.SWISSTNE_MAX_CORRIDOR_KM_CABLE || '25');
+        const envWater = parseFloat(process.env.SWISSTNE_MAX_CORRIDOR_KM_WATER || '25');
+        if (baseType === 2) return envRail;
+        if (baseType === 4) return envWater;
+        if (baseType === 3) return envCable;
+        return envRoad;
     }
 
-    const outCoords = [];
+    let currentMaxNodes = NO_LIMITS ? null : maxNodes; // used by dijkstra()
 
+    const index = useGlobal ? await loadGlobalBaseTypeIndex(baseType) : await getCachedLocalIndex(baseType, orderedStops, corridorKm);
+    if (!index) return orderedStops.map(s => [s.stop_lon, s.stop_lat]);
+
+    const outCoords = [];
     // Helper: compute corridor bbox around two stops in WGS84
     function makeCorridorBBox(a, b, bufKm) {
         const line = turf.lineString([
@@ -360,7 +332,45 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
         return turf.bbox(buffered);
     }
 
-    // Helper: build graph from edges returned by rbush search
+// Fast geodesic helpers (avoid turf.length per-edge overhead)
+    function haversineKm(lon1, lat1, lon2, lat2) {
+        const R = 6371;
+        const toRad = Math.PI / 180;
+        const dLat = (lat2 - lat1) * toRad;
+        const dLon = (lon2 - lon1) * toRad;
+        const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLon / 2) ** 2;
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
+    }
+    function geodesicLengthKm(coords) {
+        let sum = 0;
+        for (let i = 1; i < coords.length; i++) {
+            const [lon1, lat1] = coords[i - 1];
+            const [lon2, lat2] = coords[i];
+            sum += haversineKm(lon1, lat1, lon2, lat2);
+        }
+        return sum;
+    }
+
+// Limit candidate edges by proximity to an anchor point using feature bboxes
+    function limitCandidatesByAnchor(candidates, anchorLonLat, maxCount) {
+        const list = (candidates.features || candidates || []);
+        if (!maxCount || list.length <= maxCount) return list;
+        const [ax, ay] = anchorLonLat;
+        // Score by distance from bbox center to anchor
+        const scored = list.map(f => {
+            const b = f.bbox || turf.bbox(f);
+            const cx = (b[0] + b[2]) / 2;
+            const cy = (b[1] + b[3]) / 2;
+            const dx = ax - cx;
+            const dy = ay - cy;
+            return { f, d2: dx * dx + dy * dy };
+        });
+        scored.sort((u, v) => u.d2 - v.d2);
+        return scored.slice(0, maxCount).map(x => x.f);
+    }
+
+// Helper: build graph from edges returned by rbush search
     function buildGraph(candidates) {
         const graph = new Map(); // nodeId -> Array<{to, edgeId, weight}>
         const edgeById = new Map();
@@ -379,8 +389,8 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
             const eid = props.object_id || props.id || `${fromId}->${toId}:${coords[0]}:${coords[coords.length-1]}`;
             edgeById.set(eid, f);
 
-            // base weight = geometric length
-            let w = turf.length(turf.lineString(coords), { units: 'kilometers' }) * modeFactor;
+            // base weight = geometric length (fast haversine)
+            let w = geodesicLengthKm(coords) * modeFactor;
             // penalties from documentation attributes
             const isConnector = props.connector === true || props.connector === 1 || props.connector === '1';
             if (isConnector && connectorPenaltyKm > 0) w += connectorPenaltyKm;
@@ -398,10 +408,23 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
         return { graph, edgeById, degree };
     }
 
-    // Helper: snap stop to nearest edge within bbox; return nearest endpoint nodeId
-    function snapStopToNode(stop, bbox, degreeMap) {
+// Helper: snap stop to nearest edge within bbox; return nearest endpoint nodeId
+    function snapStopToNode(stop, bbox, degreeMap, preferNodeId = null, graph = null) {
         const pt = turf.point([stop.stop_lon, stop.stop_lat]);
-        const candidates = index.search(bbox);
+        // If we have a preferred node (from previous leg) and it's inside bbox and near the stop, honor it
+        if (preferNodeId && graph && graph.has(preferNodeId) && nodesById && nodesById.has(preferNodeId)) {
+            const node = nodesById.get(preferNodeId);
+            const [nx, ny] = node.coord || [];
+            if (nx != null && ny != null) {
+                const inBBox = nx >= bbox[0] && nx <= bbox[2] && ny >= bbox[1] && ny <= bbox[3];
+                const dMeters = turf.distance(pt, turf.point([nx, ny]), { units: 'meters' }) * 1000;
+                if (inBBox && dMeters <= 1000) {
+                    return { nodeId: preferNodeId, edge: null };
+                }
+            }
+        }
+        let candidates = index.search(bbox);
+        candidates = limitCandidatesByAnchor(candidates, [stop.stop_lon, stop.stop_lat], NO_LIMITS ? null : Math.max(300, Math.floor(maxCandidates / 2)));
         let best = null;
         let minDist = Infinity;
         for (const e of (candidates.features || candidates)) {
@@ -433,36 +456,75 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
         return { nodeId, edge: best };
     }
 
-    // Dijkstra over node graph
+// Simple binary heap min-priority queue
+    class MinHeap {
+        constructor() { this.arr = []; }
+        push(item) {
+            const a = this.arr;
+            a.push(item);
+            let i = a.length - 1;
+            while (i > 0) {
+                const p = ((i - 1) >> 1);
+                if (a[p].d <= a[i].d) break;
+                [a[p], a[i]] = [a[i], a[p]];
+                i = p;
+            }
+        }
+        pop() {
+            const a = this.arr;
+            if (a.length === 0) return null;
+            const top = a[0];
+            const last = a.pop();
+            if (a.length > 0) {
+                a[0] = last;
+                // down-heap
+                let i = 0;
+                const n = a.length;
+                while (true) {
+                    let l = 2 * i + 1;
+                    let r = l + 1;
+                    let m = i;
+                    if (l < n && a[l].d < a[m].d) m = l;
+                    if (r < n && a[r].d < a[m].d) m = r;
+                    if (m === i) break;
+                    [a[i], a[m]] = [a[m], a[i]];
+                    i = m;
+                }
+            }
+            return top;
+        }
+        get length() { return this.arr.length; }
+    }
+
+// Dijkstra over node graph (heap-based)
     function dijkstra(graph, start, goal) {
         const dist = new Map();
         const prev = new Map(); // node -> {node, viaEdgeId}
         const visited = new Set();
-        const pq = [];
-        function push(node, d) {
-            pq.push({ node, d });
-            pq.sort((a, b) => a.d - b.d);
-        }
+        const heap = new MinHeap();
         for (const key of graph.keys()) dist.set(key, Infinity);
         dist.set(start, 0);
-        push(start, 0);
+        heap.push({ node: start, d: 0 });
         let expansions = 0;
-        while (pq.length) {
-            const { node } = pq.shift();
+        while (heap.length) {
+            const top = heap.pop();
+            if (!top) break;
+            const node = top.node;
             if (visited.has(node)) continue;
             visited.add(node);
             if (node === goal) break;
             const neigh = graph.get(node) || [];
+            const base = dist.get(node);
             for (const { to, edgeId, weight } of neigh) {
-                const alt = dist.get(node) + weight;
+                const alt = base + weight;
                 if (alt < (dist.get(to) ?? Infinity)) {
                     dist.set(to, alt);
                     prev.set(to, { node, viaEdgeId: edgeId });
-                    push(to, alt);
+                    heap.push({ node: to, d: alt });
                 }
             }
             expansions++;
-            if (maxNodes && expansions > maxNodes) break;
+            if (typeof currentMaxNodes === 'number' && currentMaxNodes > 0 && expansions > currentMaxNodes) break;
         }
         if (!prev.has(goal)) return null;
         // reconstruct node path as sequence of edgeIds
@@ -478,7 +540,7 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
         return edgeIds;
     }
 
-    // Append coordinates of an edge with direction and deduplicate
+// Append coordinates of an edge with direction and deduplicate
     function appendEdgeCoords(edge, fromNodeId, toNodeId, acc) {
         const props = edge.properties || {};
         const edgeFrom = props.from_node_object_id || props.from_node || props.from;
@@ -495,26 +557,50 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
         }
     }
 
+    let prevEndNodeId = null;
     for (let i = 0; i < orderedStops.length - 1; i++) {
         const a = orderedStops[i];
         const b = orderedStops[i + 1];
-        let bbox = makeCorridorBBox(a, b, corridorKm);
+        const legDistKm = haversineKm(a.stop_lon, a.stop_lat, b.stop_lon, b.stop_lat);
+        const maxCorridorKm = getMaxCorridorKm(baseType);
+        const baseCorridor = corridorKm;
+        const usedCorridorKm = dynamicScaleOn ? Math.min(maxCorridorKm, Math.max(baseCorridor, legDistKm * scaleK)) : baseCorridor;
+        let bbox = makeCorridorBBox(a, b, usedCorridorKm);
+
+        const maxAttempts = parseInt(process.env.SWISSTNE_MAX_ATTEMPTS || '5', 10);
         let attempt = 0;
         let succeeded = false;
-        while (attempt < 3 && !succeeded) {
-            const candidates = index.search(bbox);
+        if (DEBUG) {
+            console.log(`[SwissTNE] Leg ${i+1}/${orderedStops.length-1} dist=${legDistKm.toFixed(2)}km corridor=${usedCorridorKm.toFixed(2)}km`);
+        }
+        while (attempt < maxAttempts && !succeeded) {
+            // scale candidates and node cap with distance; on last attempt lift caps
+            const scaledCandidateCap = NO_LIMITS ? null : ((attempt === maxAttempts - 1)
+                ? null
+                : Math.min(5000, Math.floor(maxCandidates + Math.max(0, legDistKm) * 150)));
+            currentMaxNodes = NO_LIMITS ? null : ((attempt === maxAttempts - 1)
+                ? hardMaxNodes
+                : Math.min(hardMaxNodes, Math.floor(maxNodes + Math.max(0, legDistKm) * 5000)));
+
+            const rawCandidates = index.search(bbox);
+            const anchor = [ (a.stop_lon + b.stop_lon) / 2, (a.stop_lat + b.stop_lat) / 2 ];
+            const candidates = scaledCandidateCap ? limitCandidatesByAnchor(rawCandidates, anchor, scaledCandidateCap) : (rawCandidates.features || rawCandidates);
             if (!candidates || (candidates.features || candidates).length === 0) {
-                // widen corridor a bit and retry
+                // widen corridor and retry
                 attempt++;
-                bbox = makeCorridorBBox(a, b, corridorKm * (1 + 0.5 * attempt));
+                const widen = usedCorridorKm * Math.pow(1 + Math.max(0.1, widenFactor), attempt);
+                bbox = makeCorridorBBox(a, b, Math.min(maxCorridorKm, widen));
+                if (DEBUG) console.log(`[SwissTNE]  widen#${attempt} bbox, candidates=0`);
                 continue;
             }
             const { graph, edgeById } = buildGraph(candidates);
-            const snapA = snapStopToNode(a, bbox);
-            const snapB = snapStopToNode(b, bbox);
+            const snapA = snapStopToNode(a, bbox, null, prevEndNodeId, graph);
+            const snapB = snapStopToNode(b, bbox, null, null, graph);
             if (!snapA.nodeId || !snapB.nodeId) {
                 attempt++;
-                bbox = makeCorridorBBox(a, b, corridorKm * (1 + 0.5 * attempt));
+                const widen = usedCorridorKm * Math.pow(1 + Math.max(0.1, widenFactor), attempt);
+                bbox = makeCorridorBBox(a, b, Math.min(maxCorridorKm, widen));
+                if (DEBUG) console.log(`[SwissTNE]  widen#${attempt} snap failed`);
                 continue;
             }
             const pathEdgeIds = dijkstra(graph, snapA.nodeId, snapB.nodeId);
@@ -531,11 +617,14 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
                     appendEdgeCoords(e, prevNode, nextNode, outCoords);
                     prevNode = nextNode;
                 }
+                prevEndNodeId = snapB.nodeId;
                 succeeded = true;
                 break;
             } else {
                 attempt++;
-                bbox = makeCorridorBBox(a, b, corridorKm * (1 + 0.5 * attempt));
+                const widen = usedCorridorKm * Math.pow(1 + Math.max(0.1, widenFactor), attempt);
+                bbox = makeCorridorBBox(a, b, Math.min(maxCorridorKm, widen));
+                if (DEBUG) console.log(`[SwissTNE]  widen#${attempt} path not found (expanded=${currentMaxNodes})`);
             }
         }
         if (!succeeded) {
@@ -554,6 +643,8 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
                 if (!last || last[0] !== segStart[0] || last[1] !== segStart[1]) outCoords.push(segStart);
                 outCoords.push(segEnd);
             }
+            prevEndNodeId = null; // reset continuity on fallback
+            if (DEBUG) console.log(`[SwissTNE]  FALLBACK used (ea=${!!ea}, eb=${!!eb})`);
         }
     }
 
@@ -562,7 +653,7 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
 }
 
 // -----------------------------
-// Cache helper (build or load local index for tile)
+// Cache helper
 // -----------------------------
 async function getCachedLocalIndex(baseType, orderedStops, bufferKm = 2, cellSizeDeg = 0.5) {
     const key = makeCacheKey(baseType, orderedStops, bufferKm, cellSizeDeg);
@@ -575,7 +666,6 @@ async function getCachedLocalIndex(baseType, orderedStops, bufferKm = 2, cellSiz
     const idx = await buildIndexForBBox(tileBBox, baseType);
     localIndexCache.set(key, { index: idx, bbox: tileBBox, ts: Date.now() });
 
-    // Evict oldest when cache grown
     if (localIndexCache.size > MAX_CACHE_SIZE) {
         let oldestKey = null;
         let oldestTs = Infinity;
@@ -596,11 +686,5 @@ async function getCachedLocalIndex(baseType, orderedStops, bufferKm = 2, cellSiz
 // -----------------------------
 module.exports = {
     buildGeometryFromSwissTNE,
-    // export helpers so tests / other code can optionally pre-warm caches
-    _internal: {
-        loadNodesIfNeeded,
-        loadGlobalBaseTypeIndex,
-        getCachedLocalIndex,
-        tryLoadLUT,
-    },
+    _internal: { loadNodesIfNeeded, loadGlobalBaseTypeIndex, getCachedLocalIndex, tryLoadLUT },
 };

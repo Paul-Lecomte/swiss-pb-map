@@ -468,7 +468,7 @@ async function populateProcessedRoutesFromFiles() {
     const stopTimesMap = await collectStopTimesForTripIds('stop_times.txt', mainTripIds);
     const stopMap = await buildStopMap('stops.txt');
 
-    const batchSize = 10;
+    const batchSize = 1;
     let batch = [];
     let insertedCount = 0;
 
