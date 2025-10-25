@@ -458,10 +458,7 @@ async function populateProcessedRoutesFromFiles() {
     console.log('Cleared ProcessedRoute collection.');
 
     const routes = await parseCSV('routes.txt', Route, 'Route', { saveToDB: false });
-    // Count stop_times per trip (streaming, memory efficient)
     const counts = await countStopTimesPerTrip('stop_times.txt');
-
-    // Identify main trip for each route by streaming trips.txt (avoid loading whole file)
     const mainTripForRoute = await findMainTripsForRoutes('trips.txt', counts);
     const mainTripIds = new Set(mainTripForRoute.values());
 
@@ -484,34 +481,50 @@ async function populateProcessedRoutesFromFiles() {
         if (mainTripId) {
             const stList = stopTimesMap.get(mainTripId) || [];
             stList.sort((a, b) => parseInt(a.stop_sequence || '0') - parseInt(b.stop_sequence || '0'));
-            orderedStops = stList.map(st => {
-                const stop = stopMap.get(st.stop_id);
-                if (!stop) return null;
-                return {
-                    stop_id: stop.stop_id,
-                    stop_name: stop.stop_name,
-                    stop_lat: parseFloat(stop.stop_lat),
-                    stop_lon: parseFloat(stop.stop_lon),
-                    stop_sequence: parseInt(st.stop_sequence || '0')
-                };
-            }).filter(Boolean);
+
+            orderedStops = stList
+                .map(st => {
+                    const stop = stopMap.get(st.stop_id);
+                    if (!stop) return null;
+                    return {
+                        stop_id: stop.stop_id,
+                        stop_name: stop.stop_name,
+                        stop_lat: parseFloat(stop.stop_lat),
+                        stop_lon: parseFloat(stop.stop_lon),
+                        stop_sequence: parseInt(st.stop_sequence || '0')
+                    };
+                })
+                .filter(Boolean);
         }
 
         const lats = orderedStops.map(s => s.stop_lat);
         const lons = orderedStops.map(s => s.stop_lon);
-        const bounds = (lats.length && lons.length) ? {
-            min_lat: Math.min(...lats),
-            max_lat: Math.max(...lats),
-            min_lon: Math.min(...lons),
-            max_lon: Math.max(...lons)
-        } : null;
+        const bounds = (lats.length && lons.length)
+            ? {
+                min_lat: Math.min(...lats),
+                max_lat: Math.max(...lats),
+                min_lon: Math.min(...lons),
+                max_lon: Math.max(...lons)
+            }
+            : null;
 
         let geometryCoords = [];
         if (orderedStops.length >= 2) {
             try {
-                // 🟢 SwissTNE-first geometry computation
-                console.log(`➡️  Computing geometry (SwissTNE-first) for route_type=${route.route_type} (${orderedStops.length} stops)...`);
-                geometryCoords = await buildRouteGeometry(orderedStops, route.route_type);
+                console.log(`➡️  Computing geometry for route_type=${route.route_type} (${orderedStops.length} stops)...`);
+
+                // 🟢 Try using the new Swiss trajectory API first (if train_id available)
+                // We’ll assume the GTFS trip_id or route_id can serve as the `train_id`
+                // (you can adjust this mapping depending on your GTFS data)
+                const trainIdCandidate = mainTripId || route.route_id;
+
+                geometryCoords = await buildRouteGeometry(
+                    orderedStops,
+                    route.route_type,
+                    2,
+                    trainIdCandidate
+                );
+
             } catch (err) {
                 console.error(`❌ Failed to build geometry for route ${route.route_id}:`, err.message);
             }
@@ -530,7 +543,9 @@ async function populateProcessedRoutesFromFiles() {
             bounds,
             geometry: {
                 type: "LineString",
-                coordinates: geometryCoords.length ? geometryCoords : orderedStops.map(s => [s.stop_lon, s.stop_lat])
+                coordinates: geometryCoords.length
+                    ? geometryCoords
+                    : orderedStops.map(s => [s.stop_lon, s.stop_lat])
             }
         };
 
