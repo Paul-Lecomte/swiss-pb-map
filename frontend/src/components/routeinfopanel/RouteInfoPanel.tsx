@@ -44,7 +44,7 @@ const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose }) => {
                     md:w-[40%] sm:w-[90%] sm:left-[5%] sm:top-[70px] sm:h-[70vh]">
             {/* HEADER */}
             <div className="flex items-center mb-3 relative">
-                <div className="w-12 h-12 bg-red-700 text-white rounded-full flex items-center justify-center font-bold text-lg mr-3">
+                <div className=" bg-red-700 p-2 text-white rounded-full flex items-center justify-center font-bold text-lg mr-3">
                     {route.properties.route_short_name}
                 </div>
                 <div className="flex-1">
