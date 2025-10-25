@@ -1,4 +1,5 @@
 // Routes will resolved to straight path outisde of switzerland
+// TODO : Fix the gemoetry not going to the end with very long routes
 const path = require("path");
 const fs = require("fs");
 const turf = require("@turf/turf");
