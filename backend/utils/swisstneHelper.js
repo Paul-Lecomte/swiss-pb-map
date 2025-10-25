@@ -32,7 +32,7 @@ const LUT_QUALITYSTATUS_PATH = path.join(BASE_DIR, "lut_quality_status.json");
 // Caches & constants
 // -----------------------------
 const localIndexCache = new Map(); // key -> { index, bbox, ts }
-const MAX_CACHE_SIZE = 12; // LRU cap
+const MAX_CACHE_SIZE = 24; // LRU cap
 const globalIndexByBaseType = new Map(); // optional global index cache
 let nodesById = null; // Map<object_id -> { coord: [lon,lat], props }>
 let lutBaseType = null;
@@ -50,25 +50,33 @@ function getBaseTypeForRoute(routeType) {
     return 1; // Roads, buses, cars, etc.
 }
 
-// Per-mode defaults and env overrides for corridor width (km)
+// Per-mode defaults for corridor width (km)
 function getCorridorKmForRoute(routeType) {
     const t = parseInt(routeType, 10);
-    const globalOverride = process.env.SWISSTNE_CORRIDOR_KM && parseFloat(process.env.SWISSTNE_CORRIDOR_KM);
-    const envRoad = process.env.SWISSTNE_CORRIDOR_KM_ROAD && parseFloat(process.env.SWISSTNE_CORRIDOR_KM_ROAD);
-    const envRail = process.env.SWISSTNE_CORRIDOR_KM_RAIL && parseFloat(process.env.SWISSTNE_CORRIDOR_KM_RAIL);
-    const envCable = process.env.SWISSTNE_CORRIDOR_KM_CABLE && parseFloat(process.env.SWISSTNE_CORRIDOR_KM_CABLE);
-    const envWater = process.env.SWISSTNE_CORRIDOR_KM_WATER && parseFloat(process.env.SWISSTNE_CORRIDOR_KM_WATER);
-
     const dRoad = 0.8;
     const dRail = 1.5;
     const dCable = 0.6;
     const dWater = 2.5;
 
-    if (!Number.isNaN(globalOverride) && globalOverride > 0.1) return globalOverride;
-    if ([2, 101, 102, 103, 105, 106, 107, 109, 116, 117].includes(t)) return !Number.isNaN(envRail) && envRail > 0 ? envRail : dRail;
-    if (t === 4) return !Number.isNaN(envWater) && envWater > 0 ? envWater : dWater;
-    if ([5, 6, 7, 1400].includes(t)) return !Number.isNaN(envCable) && envCable > 0 ? envCable : dCable;
-    return !Number.isNaN(envRoad) && envRoad > 0 ? envRoad : dRoad;
+    if ([2, 101, 102, 103, 105, 106, 107, 109, 116, 117].includes(t)) return dRail;
+    if (t === 4) return dWater;
+    if ([5, 6, 7, 1400].includes(t)) return dCable;
+    return dRoad;
+}
+
+// Per-mode snapping radius (meters)
+function getSnappingRadiusForRoute(routeType) {
+    const t = parseInt(routeType, 10);
+    if ([2, 101, 102, 103, 105, 106, 107, 109, 116, 117].includes(t)) return 300; // rail
+    if (t === 4) return 500; // ferry
+    if ([5, 6, 7, 1400].includes(t)) return 600; // cableway (allow larger)
+    return 100; // roads / buses
+}
+
+// Approx Swiss bounding box (WGS84) — used to avoid internal fallback straight-lines
+function isInSwitzerland(lon, lat) {
+    // conservative bounding box: [minLon, minLat, maxLon, maxLat]
+    return lon >= 5.9 && lon <= 10.6 && lat >= 45.7 && lat <= 47.9;
 }
 
 function bboxIntersects(a, b) {
@@ -264,7 +272,7 @@ function findNearestEdge(point, index) {
         const r2 = 2;
         const dLat2 = r2 / 111;
         const dLon2 = dLat2 / Math.max(Math.cos((lat * Math.PI) / 180), 0.1);
-        const searchBBox2 = [lon - dLon2, lat - dLat2, lon + dLon2, lat + dLat2];
+        const searchBBox2 = [lon - dLon2, lat - dLat2, lon + dLon2, lat + dLon2];
         const candidates2 = index.search(searchBBox2);
         for (const edge of (candidates2.features || candidates2)) {
             const dist = turf.pointToLineDistance(point, edge, { units: "meters" });
@@ -290,34 +298,30 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
     await loadNodesIfNeeded();
 
     const baseType = getBaseTypeForRoute(routeType);
-    const useGlobal = process.env.SWISSTNE_GLOBAL_INDEX === "1";
+    const useGlobal = false; // default: use local cache
     const corridorKm = Math.max(0.3, parseFloat(getCorridorKmForRoute(routeType)));
-    const maxNodes = parseInt(process.env.SWISSTNE_MAX_NODES || '200000', 10);
-    const hardMaxNodes = parseInt(process.env.SWISSTNE_MAX_NODES_HARD || '1500000', 10);
-    const DEBUG = process.env.SWISSTNE_DEBUG === '1';
-    const NO_LIMITS = process.env.SWISSTNE_NO_LIMITS === '1';
-    const maxCandidates = NO_LIMITS ? Infinity : parseInt(process.env.SWISSTNE_MAX_CANDIDATES || '12000', 10);
+    const maxNodes = 200000;
+    const hardMaxNodes = 1500000;
+    const DEBUG = Boolean(process.env.SWISSTNE_DEBUG === "1" || process.env.SWISSTNE_DEBUG === "true");
+    const NO_LIMITS = false;
+    const maxCandidates = 12000;
 
-    // dynamic scaling knobs
-    const dynamicScaleOn = process.env.SWISSTNE_DYNAMIC_SCALE === '1';
-    const scaleK = parseFloat(process.env.SWISSTNE_DYNAMIC_SCALE_K || '0.3');
-    const widenFactor = parseFloat(process.env.SWISSTNE_WIDEN_FACTOR || '1.0');
+    const dynamicScaleOn = false;
+    const scaleK = 0.3;
+    const widenFactor = 1.0;
 
-    // per-mode maximum corridor
     function getMaxCorridorKm(baseType) {
-        if (NO_LIMITS) return Number.POSITIVE_INFINITY;
-        const envRoad = parseFloat(process.env.SWISSTNE_MAX_CORRIDOR_KM_ROAD || '2500');
-        const envRail = parseFloat(process.env.SWISSTNE_MAX_CORRIDOR_KM_RAIL || '2500');
-        const envCable = parseFloat(process.env.SWISSTNE_MAX_CORRIDOR_KM_CABLE || '2500');
-        const envWater = parseFloat(process.env.SWISSTNE_MAX_CORRIDOR_KM_WATER || '2500');
+        const envRoad = 2500;
+        const envRail = 2500;
+        const envCable = 2500;
+        const envWater = 2500;
         if (baseType === 2) return envRail;
         if (baseType === 4) return envWater;
         if (baseType === 3) return envCable;
         return envRoad;
     }
 
-    let currentMaxNodes = NO_LIMITS ? null : maxNodes; // used by dijkstra()
-
+    let currentMaxNodes = maxNodes;
     const index = useGlobal ? await loadGlobalBaseTypeIndex(baseType) : await getCachedLocalIndex(baseType, orderedStops, corridorKm);
     if (!index) return orderedStops.map(s => [s.stop_lon, s.stop_lat]);
 
@@ -409,7 +413,7 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
     }
 
 // Helper: snap stop to nearest edge within bbox; return nearest endpoint nodeId
-    function snapStopToNode(stop, bbox, degreeMap, preferNodeId = null, graph = null) {
+    function snapStopToNode(stop, bbox, degreeMap, preferNodeId = null, graph = null, routeTypeLocal = routeType) {
         const pt = turf.point([stop.stop_lon, stop.stop_lat]);
         // If we have a preferred node (from previous leg) and it's inside bbox and near the stop, honor it
         if (preferNodeId && graph && graph.has(preferNodeId) && nodesById && nodesById.has(preferNodeId)) {
@@ -418,12 +422,16 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
             if (nx != null && ny != null) {
                 const inBBox = nx >= bbox[0] && nx <= bbox[2] && ny >= bbox[1] && ny <= bbox[3];
                 const dMeters = turf.distance(pt, turf.point([nx, ny]), { units: 'meters' }) * 1000;
-                if (inBBox && dMeters <= 1000) {
+                const snapRadius = getSnappingRadiusForRoute(routeTypeLocal);
+                if (inBBox && dMeters <= Math.max(1000, snapRadius * 3)) { // allow broader acceptance for preferred node
                     return { nodeId: preferNodeId, edge: null };
                 }
             }
         }
+
+        // search candidates in bbox and slightly larger radius
         let candidates = index.search(bbox);
+        // attempt limited candidate set to speed up
         candidates = limitCandidatesByAnchor(candidates, [stop.stop_lon, stop.stop_lat], NO_LIMITS ? null : Math.max(300, Math.floor(maxCandidates / 2)));
         let best = null;
         let minDist = Infinity;
@@ -434,6 +442,32 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
                 best = e;
             }
         }
+
+        // If nearest found within reasonable radius, accept; otherwise expand search radius using the per-mode snapping
+        const snappingRadius = getSnappingRadiusForRoute(routeTypeLocal);
+        if (!best || minDist > Math.max(2000, snappingRadius * 5)) {
+            // broad search using snappingRadius * 2 (in km)
+            const radiusKm = Math.max(0.2, snappingRadius / 1000 * 2);
+            const buffered = turf.buffer(pt, radiusKm, { units: 'kilometers' });
+            const b = turf.bbox(buffered);
+            const broader = index.search(b);
+            if (broader && (broader.features || broader).length) {
+                let localBest = null;
+                let localMin = Infinity;
+                for (const e of (broader.features || broader)) {
+                    const d = turf.pointToLineDistance(pt, e, { units: 'meters' });
+                    if (d < localMin) {
+                        localMin = d;
+                        localBest = e;
+                    }
+                }
+                if (localBest) {
+                    best = localBest;
+                    minDist = localMin;
+                }
+            }
+        }
+
         if (!best) return { nodeId: null, edge: null };
         const props = best.properties || {};
         const fromId = props.from_node_object_id || props.from_node || props.from;
@@ -453,6 +487,13 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
             if (deg1 > deg0) nodeId = toId;
             else nodeId = fromId;
         }
+
+        // Additional check: if minDist is somewhat bigger than snappingRadius, we may reject node (so we avoid weird long connectors)
+        if (minDist > Math.max(2000, getSnappingRadiusForRoute(routeTypeLocal) * 8)) {
+            // too far to snap reliably
+            return { nodeId: null, edge: null };
+        }
+
         return { nodeId, edge: best };
     }
 
@@ -593,14 +634,14 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
                 if (DEBUG) console.log(`[SwissTNE]  widen#${attempt} bbox, candidates=0`);
                 continue;
             }
-            const { graph, edgeById } = buildGraph(candidates);
-            const snapA = snapStopToNode(a, bbox, null, prevEndNodeId, graph);
-            const snapB = snapStopToNode(b, bbox, null, null, graph);
+            const { graph, edgeById, degree } = buildGraph(candidates);
+            const snapA = snapStopToNode(a, bbox, degree, prevEndNodeId, graph, routeType);
+            const snapB = snapStopToNode(b, bbox, degree, null, graph, routeType);
             if (!snapA.nodeId || !snapB.nodeId) {
                 attempt++;
                 const widen = usedCorridorKm * Math.pow(1 + Math.max(0.1, widenFactor), attempt);
                 bbox = makeCorridorBBox(a, b, Math.min(maxCorridorKm, widen));
-                if (DEBUG) console.log(`[SwissTNE]  widen#${attempt} snap failed`);
+                if (DEBUG) console.log(`[SwissTNE]  widen#${attempt} snap failed (snapA=${!!snapA.nodeId}, snapB=${!!snapB.nodeId})`);
                 continue;
             }
             const pathEdgeIds = dijkstra(graph, snapA.nodeId, snapB.nodeId);
@@ -633,18 +674,61 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
             const ptb = turf.point([b.stop_lon, b.stop_lat]);
             const ea = findNearestEdge(pta, index);
             const eb = findNearestEdge(ptb, index);
-            if (ea) appendEdgeCoords(ea, null, null, outCoords);
-            if (eb) appendEdgeCoords(eb, null, null, outCoords);
-            if (!ea && !eb) {
-                // straight line
-                const last = outCoords[outCoords.length - 1];
-                const segStart = [a.stop_lon, a.stop_lat];
-                const segEnd = [b.stop_lon, b.stop_lat];
-                if (!last || last[0] !== segStart[0] || last[1] !== segStart[1]) outCoords.push(segStart);
-                outCoords.push(segEnd);
+
+            const aInCH = isInSwitzerland(a.stop_lon, a.stop_lat);
+            const bInCH = isInSwitzerland(b.stop_lon, b.stop_lat);
+
+            // If both stops are inside Switzerland, try a final large expansion before allowing any straight line
+            if (aInCH && bInCH) {
+                if (DEBUG) console.log(`[SwissTNE] Final large expansion attempt for leg ${i+1}`);
+                const hugeCorridorKm = Math.min(getMaxCorridorKm(baseType), Math.max(usedCorridorKm * 8, 15));
+                const hugeBBox = makeCorridorBBox(a, b, hugeCorridorKm);
+                const hugeCandidates = index.search(hugeBBox);
+                if (hugeCandidates && (hugeCandidates.features || hugeCandidates).length > 0) {
+                    const { graph: g2, edgeById: eb2, degree: deg2 } = buildGraph(hugeCandidates);
+                    const snapA2 = snapStopToNode(a, hugeBBox, deg2, prevEndNodeId, g2, routeType);
+                    const snapB2 = snapStopToNode(b, hugeBBox, deg2, null, g2, routeType);
+                    if (snapA2.nodeId && snapB2.nodeId) {
+                        const pathEdgeIds2 = dijkstra(g2, snapA2.nodeId, snapB2.nodeId);
+                        if (pathEdgeIds2 && pathEdgeIds2.length) {
+                            let prevNode = snapA2.nodeId;
+                            for (const eid of pathEdgeIds2) {
+                                const e = eb2.get(eid);
+                                if (!e) continue;
+                                const props = e.properties || {};
+                                const ef = props.from_node_object_id || props.from_node || props.from;
+                                const et = props.to_node_object_id || props.to_node || props.to;
+                                const nextNode = prevNode === ef ? et : ef;
+                                appendEdgeCoords(e, prevNode, nextNode, outCoords);
+                                prevNode = nextNode;
+                            }
+                            prevEndNodeId = snapB2.nodeId;
+                            succeeded = true;
+                        }
+                    }
+                }
             }
-            prevEndNodeId = null; // reset continuity on fallback
-            if (DEBUG) console.log(`[SwissTNE]  FALLBACK used (ea=${!!ea}, eb=${!!eb})`);
+
+            if (!succeeded) {
+                // ok, still not succeeded after large expansion
+                // Append nearest edge geometries where available (these are local edges, not straight-line)
+                if (ea) appendEdgeCoords(ea, null, null, outCoords);
+                if (eb) appendEdgeCoords(eb, null, null, outCoords);
+
+                // Only allow a straight-line segment if at least one stop is outside Switzerland (network data may not be available)
+                if (!ea && !eb && (!aInCH || !bInCH)) {
+                    const last = outCoords[outCoords.length - 1];
+                    const segStart = [a.stop_lon, a.stop_lat];
+                    const segEnd = [b.stop_lon, b.stop_lat];
+                    if (!last || last[0] !== segStart[0] || last[1] !== segStart[1]) outCoords.push(segStart);
+                    outCoords.push(segEnd);
+                    if (DEBUG) console.log(`[SwissTNE] Allowed straight-line fallback for international leg (${aInCH}, ${bInCH})`);
+                } else {
+                    // If we appended nearest edges but didn't find both, do not add straight line — break continuity and continue
+                    prevEndNodeId = null; // reset continuity on fallback
+                    if (DEBUG) console.log(`[SwissTNE] FALLBACK used without straight-line (ea=${!!ea}, eb=${!!eb})`);
+                }
+            }
         }
     }
 
