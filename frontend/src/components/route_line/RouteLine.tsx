@@ -33,7 +33,7 @@ const RouteLine: React.FC<RouteLineProps> = ({ route, color = "#0074D9", onClick
                 positions={positions}
                 pathOptions={{
                     color: routeColor,
-                    weight: 1,
+                    weight: 1.5,
                     opacity: 0.8,
                     lineCap: "round",
                 }}
@@ -51,7 +51,7 @@ const RouteLine: React.FC<RouteLineProps> = ({ route, color = "#0074D9", onClick
                         fillOpacity: 0.9,
                         weight: 1,
                     }}
-                    {...({ radius: 4 } as any)} // cast pour contourner mismatch de types TS si présent
+                    {...({ radius: 4 } as any)}
                 />
             ))}
         </>
