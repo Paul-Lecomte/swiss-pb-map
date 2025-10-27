@@ -322,6 +322,18 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
         return null;
     };
 
+    const uniqueRoutes = Object.values(
+        routes.reduce((acc: Record<string, any>, route: any) => {
+            const id =
+                route.properties?.route_id ||
+                `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
+
+            // Only keep the first route with this id
+            if (!acc[id]) acc[id] = route;
+            return acc;
+        }, {})
+    );
+
     return (
         <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", zIndex: 0 }}>
             <div style={{
@@ -357,25 +369,29 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
                 <MapRefBinder />
                 <MapEvents />
 
-                {routes
+                {uniqueRoutes
                     .filter((route: any) => {
                         if (highlightedRouteId) {
-                            const id = route.properties?.route_id || `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
+                            const id =
+                                route.properties?.route_id ||
+                                `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
                             return id === highlightedRouteId;
                         }
                         const mode = detectRouteMode(route);
-                        if (mode === 'railway') return layersVisible.railway;
-                        if (mode === 'tram') return layersVisible.tram;
-                        if (mode === 'bus') return layersVisible.bus;
-                        if (mode === 'trolleybus') return layersVisible.trolleybus;
-                        if (mode === 'ferry') return layersVisible.ferry;
+                        if (mode === "railway") return layersVisible.railway;
+                        if (mode === "tram") return layersVisible.tram;
+                        if (mode === "bus") return layersVisible.bus;
+                        if (mode === "trolleybus") return layersVisible.trolleybus;
+                        if (mode === "ferry") return layersVisible.ferry;
                         return true;
                     })
-                    .map((route: any, idx: number) => {
-                        const id = route.properties?.route_id || `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
+                    .map((route: any) => {
+                        const id =
+                            route.properties?.route_id ||
+                            `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
                         return (
                             <RouteLine
-                                key={idx}
+                                key={id}
                                 route={route}
                                 color={route.properties?.route_color}
                                 onClick={() => handleRouteClick(route)}
