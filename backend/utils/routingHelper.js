@@ -10,7 +10,7 @@ async function throttleRequest() {
     const now = Date.now();
     const elapsed = now - lastRequestTime;
     if (elapsed < 1000) {
-        await new Promise(resolve => setTimeout(resolve, 1000 - elapsed));
+        await new Promise(resolve => setTimeout(resolve, 10 - elapsed));
     }
     lastRequestTime = Date.now();
 }
@@ -82,14 +82,16 @@ async function fetchTrajectoryGeometry(train_id, gen_level = 0) {
     }
 
     const baseUrl = "https://api.geops.io/tracker-http/v1";
-    const url = `${baseUrl}/journeys/${encodeURIComponent(train_id)}/?key=${encodeURIComponent(GEOPS_API_KEY)}`;
+    const params = new URLSearchParams({ key: GEOPS_API_KEY });
+    if (Number.isFinite(gen_level)) params.set("gen_level", String(gen_level));
+    const url = `${baseUrl}/journeys/${encodeURIComponent(train_id)}/?${params.toString()}`;
 
     await throttleRequest(); // ensures 1 request/sec
 
     try {
         console.log(`🌐 [geOps] Requesting: ${url}`);
         const resp = await axios.get(url, {
-            timeout: 10000,
+            timeout: 100,
             headers: {
                 Accept: "application/json"
             },

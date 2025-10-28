@@ -469,6 +469,11 @@ async function populateProcessedRoutesFromFiles() {
     let batch = [];
     let insertedCount = 0;
 
+    // Defer routes with no live geOps train_id candidates
+    const deferredRoutes = [];
+    let geOpsCandidateRoutes = 0;
+    let insertedPhase1 = 0;
+
     for (let routeIndex = 0; routeIndex < routes.length; routeIndex++) {
         const route = routes[routeIndex];
         if (routeIndex % 10 === 0 || routeIndex === 0) {
@@ -508,39 +513,110 @@ async function populateProcessedRoutesFromFiles() {
             }
             : null;
 
-        let geometryCoords = [];
-        if (orderedStops.length >= 2) {
+        // If not enough stops, build straight line later in fallback phase
+        if (orderedStops.length < 2) {
+            deferredRoutes.push({ route, orderedStops, bounds });
+            continue;
+        }
+
+        try {
+            console.log(`➡️  Computing geometry for route_type=${route.route_type} (${orderedStops.length} stops)...`);
+
+            // 🟢 Try using geOps live trajectories feed to discover train_id by line name
+            let trainIdCandidates = [];
             try {
-                console.log(`➡️  Computing geometry for route_type=${route.route_type} (${orderedStops.length} stops)...`);
-
-                // 🟢 Try using geOps live trajectories feed to discover train_id by line name
-                let trainIdCandidates = [];
-                try {
-                    trainIdCandidates = await findTrainIdsByRouteNameLive(
-                        route.route_short_name,
-                        route.route_long_name,
-                        { bounds }
-                    );
-                    if (trainIdCandidates && trainIdCandidates.length) {
-                        const preview = trainIdCandidates.slice(0, 5).join(", ");
-                        console.log(`🔎 [Live] geOps candidates for ${route.route_short_name || route.route_id}: [${preview}] (${trainIdCandidates.length} total)`);
-                    } else {
-                        console.log(`ℹ️ No [Live] geOps train_id candidates for ${route.route_short_name || route.route_id}; will use SwissTNE/OSRM`);
-                    }
-                } catch (e) {
-                    console.warn(`⚠️ [Live] train_id lookup failed for ${route.route_short_name || route.route_id}:`, e.message);
-                }
-
-                geometryCoords = await buildRouteGeometry(
-                    orderedStops,
-                    route.route_type,
-                    2,
-                    trainIdCandidates
+                trainIdCandidates = await findTrainIdsByRouteNameLive(
+                    route.route_short_name,
+                    route.route_long_name,
+                    { bounds }
                 );
-
-            } catch (err) {
-                console.error(`❌ Failed to build geometry for route ${route.route_id}:`, err.message);
+                if (trainIdCandidates && trainIdCandidates.length) {
+                    const preview = trainIdCandidates.slice(0, 5).join(", ");
+                    console.log(`🔎 [Live] geOps candidates for ${route.route_short_name || route.route_id}: [${preview}] (${trainIdCandidates.length} total)`);
+                } else {
+                    console.log(`🕗 [Defer] No [Live] geOps train_id candidates for ${route.route_short_name || route.route_id}; deferring to end`);
+                    deferredRoutes.push({ route, orderedStops, bounds });
+                    continue; // do not compute fallbacks now
+                }
+            } catch (e) {
+                console.warn(`⚠️ [Live] train_id lookup failed for ${route.route_short_name || route.route_id}:`, e.message);
+                console.log(`🕗 [Defer] Live lookup failed; deferring ${route.route_short_name || route.route_id} to end`);
+                deferredRoutes.push({ route, orderedStops, bounds });
+                continue;
             }
+
+            // We have candidates: attempt geOps, then immediate fallback if needed
+            geOpsCandidateRoutes++;
+            const geometryCoords = await buildRouteGeometry(
+                orderedStops,
+                route.route_type,
+                2,
+                trainIdCandidates
+            );
+
+            const processedRoute = {
+                route_id: route.route_id,
+                agency_id: route.agency_id,
+                route_short_name: route.route_short_name,
+                route_long_name: route.route_long_name,
+                route_type: route.route_type,
+                route_desc: route.route_desc,
+                route_color: route.route_color || await getRouteColor(route.route_short_name),
+                route_text_color: route.route_text_color,
+                stops: orderedStops,
+                bounds,
+                geometry: {
+                    type: "LineString",
+                    coordinates: geometryCoords && geometryCoords.length
+                        ? geometryCoords
+                        : orderedStops.map(s => [s.stop_lon, s.stop_lat])
+                }
+            };
+
+            batch.push(processedRoute);
+
+            if (batch.length === batchSize) {
+                console.log(`Inserting batch of ${batch.length} processed routes (Phase1)`);
+                await ProcessedRoute.insertMany(batch, { ordered: false });
+                insertedCount += batch.length;
+                insertedPhase1 += batch.length;
+                batch = [];
+            }
+
+        } catch (err) {
+            console.error(`❌ Failed to build geometry for route ${route.route_id}:`, err.message);
+            // On unexpected failure, defer to Phase 2 as a safeguard
+            deferredRoutes.push({ route, orderedStops, bounds });
+        }
+    }
+
+    // Flush any remaining Phase 1 batch
+    if (batch.length > 0) {
+        console.log(`Inserting final batch of ${batch.length} processed routes (Phase1)`);
+        await ProcessedRoute.insertMany(batch, { ordered: false });
+        insertedCount += batch.length;
+        insertedPhase1 += batch.length;
+        batch = [];
+    }
+
+    // Phase 2: process deferred routes with fallbacks
+    console.log(`📊 [Phase1] geOps-candidate routes processed: ${geOpsCandidateRoutes}. Deferred (no train_id or lookup failure): ${deferredRoutes.length}.`);
+
+    let insertedDeferred = 0;
+    for (let i = 0; i < deferredRoutes.length; i++) {
+        const { route, orderedStops, bounds } = deferredRoutes[i];
+        console.log(`🛟 [Deferred Phase2] Processing ${i + 1}/${deferredRoutes.length} route_id=${route.route_id}`);
+
+        let geometryCoords = [];
+        try {
+            geometryCoords = await buildRouteGeometry(
+                orderedStops,
+                route.route_type,
+                2,
+                null // no trainId list, trigger fallbacks
+            );
+        } catch (err) {
+            console.warn(`⚠️ [Deferred Phase2] Fallback build failed for ${route.route_id}: ${err.message}. Using straight lines.`);
         }
 
         const processedRoute = {
@@ -556,28 +632,30 @@ async function populateProcessedRoutesFromFiles() {
             bounds,
             geometry: {
                 type: "LineString",
-                coordinates: geometryCoords.length
+                coordinates: geometryCoords && geometryCoords.length
                     ? geometryCoords
                     : orderedStops.map(s => [s.stop_lon, s.stop_lat])
             }
         };
 
         batch.push(processedRoute);
-
         if (batch.length === batchSize) {
-            console.log(`Inserting batch of ${batch.length} processed routes`);
+            console.log(`Inserting batch of ${batch.length} processed routes (Deferred Phase2)`);
             await ProcessedRoute.insertMany(batch, { ordered: false });
             insertedCount += batch.length;
+            insertedDeferred += batch.length;
             batch = [];
         }
     }
 
     if (batch.length > 0) {
-        console.log(`Inserting final batch of ${batch.length} processed routes`);
+        console.log(`Inserting final batch of ${batch.length} processed routes (Deferred Phase2)`);
         await ProcessedRoute.insertMany(batch, { ordered: false });
         insertedCount += batch.length;
+        insertedDeferred += batch.length;
     }
 
+    console.log(`📊 [Phase2] Deferred processed: ${insertedDeferred}`);
     console.log(`✅ ProcessedRoute population completed. Total inserted: ${insertedCount}`);
 }
 
