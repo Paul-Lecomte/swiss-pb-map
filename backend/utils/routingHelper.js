@@ -434,6 +434,155 @@ async function findTrainIdsByRouteNameLive(routeShortName, routeLongName, opts =
     return out;
 }
 
+// ---- Multi-tenant geOps live trajectories feed ----
+const tenantIndexCache = new Map(); // tenant -> { expires, index }
+
+async function fetchTenantTrajectoriesIndex(tenant) {
+    const GEOPS_API_KEY = process.env.GEOPS_API_KEY;
+    const FEED_TTL_MS = parseInt(process.env.GEOPS_MULTI_TENANT_TTL_MS || process.env.GEOPS_FEED_TTL_MS || "60000", 10);
+    if (!GEOPS_API_KEY || !tenant) return null;
+
+    const cacheKey = String(tenant).toLowerCase();
+    const now = Date.now();
+    const cached = tenantIndexCache.get(cacheKey);
+    if (cached && cached.expires > now) return cached.index;
+
+    const baseUrl = `https://api.geops.io/tracker-http/v1/trajectories/${encodeURIComponent(cacheKey)}/`;
+    const url = `${baseUrl}?${new URLSearchParams({ key: GEOPS_API_KEY }).toString()}`;
+
+    await throttleRequest();
+    try {
+        const resp = await axios.get(url, { timeout: 15000, headers: { Accept: "application/json" } });
+        if (resp.status >= 400) throw new Error(`HTTP ${resp.status}`);
+        const feats = Array.isArray(resp.data?.features) ? resp.data.features : [];
+        const index = new Map(); // Map<normalizedLineName, Set<train_id>>
+        for (const f of feats) {
+            const props = f?.properties || {};
+            const lineName = normalizeLineName(props?.line?.name);
+            const trainId = props?.train_id;
+            if (!lineName || !trainId) continue;
+            if (!index.has(lineName)) index.set(lineName, new Set());
+            index.get(lineName).add(trainId);
+        }
+        tenantIndexCache.set(cacheKey, { expires: now + FEED_TTL_MS, index });
+        console.log(`🛰️ [Live ${cacheKey}] indexed ${index.size} line keys (features=${feats.length})`);
+        return index;
+    } catch (err) {
+        const status = err?.response?.status;
+        if (status === 401 || status === 403) {
+            console.warn(`⚠️ geOps live feed auth error ${status} for tenant ${tenant}. Disabling this tenant for this run.`);
+            tenantIndexCache.set(cacheKey, { expires: now + 3600_000, index: new Map() });
+        } else {
+            console.warn(`⚠️ Live feed fetch failed for tenant ${tenant}: ${err.message}`);
+        }
+        return null;
+    }
+}
+
+function loadTenantsFromFeedData() {
+    try {
+        const file = path.join(__dirname, "..", "data", "feed_data.json");
+        if (!fs.existsSync(file)) return [];
+        const raw = fs.readFileSync(file, "utf8");
+        const json = JSON.parse(raw);
+        const feeds = json && json.feeds ? json.feeds : {};
+        const out = [];
+        for (const [key, v] of Object.entries(feeds)) {
+            const short = v && v.short_name ? String(v.short_name).toLowerCase() : key.toLowerCase();
+            const tc = v && typeof v.trajectory_count === "number" ? v.trajectory_count : 0;
+            if (tc > 0) out.push(short);
+        }
+        return out;
+    } catch (e) {
+        console.warn("⚠️ Failed to read feed_data.json tenants:", e.message);
+        return [];
+    }
+}
+
+function pickNeighborTenantsFromFeed(allTenants) {
+    // Prefer commonly relevant neighbors for Switzerland
+    const preferred = [
+        "db", // Germany
+        "sncf", "sncf-ter", "sncf-transilien", // France
+        "trenitalia", "ti", "trenord", // Italy
+        "oebb", "obb", // Austria
+        "bvb", "bls", "tpg", "zvv" // local/regional (if exposed)
+    ].map(s => s.toLowerCase());
+    const set = new Set((allTenants || []).map(s => s.toLowerCase()));
+    return preferred.filter(t => set.has(t));
+}
+
+async function fetchMultiTenantTrajectoriesIndex(tenants) {
+    const enabled = String(process.env.GEOPS_MULTI_TENANT_ENABLED || "true").toLowerCase() !== "false";
+    if (!enabled) return null;
+
+    let list = Array.isArray(tenants) && tenants.length
+        ? tenants
+        : String(process.env.GEOPS_EXTRA_TENANTS || "auto").split(",").map(s => s.trim()).filter(Boolean);
+
+    if (list.length === 1 && list[0].toLowerCase() === "auto") {
+        const all = loadTenantsFromFeedData();
+        const picked = pickNeighborTenantsFromFeed(all);
+        list = picked.length ? picked : ["db", "sncf", "trenitalia", "oebb"]; // fallback defaults
+    }
+
+    const merged = new Map(); // Map<normalizedLineName, Set<train_id>>
+    for (const t of list) {
+        const idx = await fetchTenantTrajectoriesIndex(t);
+        if (!idx || !idx.size) continue;
+        for (const [key, set] of idx.entries()) {
+            if (!merged.has(key)) merged.set(key, new Set());
+            const outSet = merged.get(key);
+            for (const id of set) outSet.add(id);
+        }
+    }
+    if (merged.size) {
+        console.log(`🛰️ [Live Multi] merged index keys=${merged.size} from tenants=[${list.join(", ")}]`);
+    }
+    return merged;
+}
+
+async function findTrainIdsByRouteNameMultiTenant(routeShortName, routeLongName, opts = {}) {
+    const GEOPS_MAX_CANDIDATES = parseInt(process.env.GEOPS_MAX_CANDIDATES || "5", 10) || 5;
+
+    const keys = [];
+    if (routeShortName) keys.push(normalizeLineName(routeShortName));
+    if (routeLongName) keys.push(normalizeLineName(routeLongName));
+
+    const addVariant = (key, out) => {
+        const m = key.match(/^(\D+)(0*)(\d+)$/);
+        if (m) {
+            const alt = (m[1] || "") + String(parseInt(m[3], 10));
+            out.push(alt);
+        }
+    };
+
+    const searchKeys = [];
+    if (keys[0]) { searchKeys.push(keys[0]); addVariant(keys[0], searchKeys); }
+    if (keys[1]) { searchKeys.push(keys[1]); addVariant(keys[1], searchKeys); }
+
+    // Build/obtain merged index
+    const tenantsEnv = String(process.env.GEOPS_EXTRA_TENANTS || "db,sncf,trenitalia,obb").split(",").map(s => s.trim()).filter(Boolean);
+    const index = await fetchMultiTenantTrajectoriesIndex(tenantsEnv);
+    if (!index || !index.size) return [];
+
+    const seen = new Set();
+    const out = [];
+    for (const k of searchKeys) {
+        if (!k) continue;
+        if (index.has(k)) {
+            for (const id of index.get(k)) {
+                if (!seen.has(id)) {
+                    seen.add(id);
+                    out.push(id);
+                    if (out.length >= GEOPS_MAX_CANDIDATES) return out;
+                }
+            }
+        }
+    }
+    return out;
+}
+
 module.exports = {
     buildRouteGeometry,
     mapRouteTypeToProfile,
@@ -442,4 +591,7 @@ module.exports = {
     findTrainIdsByRouteName,
     fetchLiveTrajectoriesIndex,
     findTrainIdsByRouteNameLive,
+    fetchTenantTrajectoriesIndex,
+    fetchMultiTenantTrajectoriesIndex,
+    findTrainIdsByRouteNameMultiTenant,
 };

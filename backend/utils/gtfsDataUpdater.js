@@ -27,7 +27,7 @@ const stream = require('stream');
 const cheerio = require('cheerio');
 const mongoose = require('mongoose');
 const connectDB = require('../config/dbConnection');
-const { buildRouteGeometry, mapRouteTypeToProfile, findTrainIdByRouteName, findTrainIdsByRouteName, findTrainIdsByRouteNameLive } = require('./routingHelper');
+const { buildRouteGeometry, mapRouteTypeToProfile, findTrainIdByRouteName, findTrainIdsByRouteName, findTrainIdsByRouteNameLive, findTrainIdsByRouteNameMultiTenant } = require('./routingHelper');
 
 // Import models
 const Agency = require('../model/agencyModel');
@@ -465,7 +465,8 @@ async function populateProcessedRoutesFromFiles() {
     const stopTimesMap = await collectStopTimesForTripIds('stop_times.txt', mainTripIds);
     const stopMap = await buildStopMap('stops.txt');
 
-    const batchSize = 1;
+    const batchSizePhase1 = parseInt(process.env.ROUTES_BATCH_SIZE_PHASE1 || process.env.ROUTES_BATCH_SIZE || "50", 10);
+    const batchSizePhase2 = parseInt(process.env.ROUTES_BATCH_SIZE_PHASE2 || process.env.ROUTES_BATCH_SIZE || "100", 10);
     let batch = [];
     let insertedCount = 0;
 
@@ -534,9 +535,21 @@ async function populateProcessedRoutesFromFiles() {
                     const preview = trainIdCandidates.slice(0, 5).join(", ");
                     console.log(`🔎 [Live] geOps candidates for ${route.route_short_name || route.route_id}: [${preview}] (${trainIdCandidates.length} total)`);
                 } else {
-                    console.log(`🕗 [Defer] No [Live] geOps train_id candidates for ${route.route_short_name || route.route_id}; deferring to end`);
-                    deferredRoutes.push({ route, orderedStops, bounds });
-                    continue; // do not compute fallbacks now
+                    // Try multi-tenant discovery before deferring
+                    const multi = await findTrainIdsByRouteNameMultiTenant(
+                        route.route_short_name,
+                        route.route_long_name,
+                        { bounds }
+                    );
+                    if (multi && multi.length) {
+                        trainIdCandidates = multi;
+                        const preview = trainIdCandidates.slice(0, 5).join(", ");
+                        console.log(`🔎 [Live Multi] geOps candidates for ${route.route_short_name || route.route_id}: [${preview}] (${trainIdCandidates.length} total)`);
+                    } else {
+                        console.log(`🕗 [Defer] No [Live] geOps train_id candidates for ${route.route_short_name || route.route_id}; deferring to end`);
+                        deferredRoutes.push({ route, orderedStops, bounds });
+                        continue; // do not compute fallbacks now
+                    }
                 }
             } catch (e) {
                 console.warn(`⚠️ [Live] train_id lookup failed for ${route.route_short_name || route.route_id}:`, e.message);
@@ -583,7 +596,7 @@ async function populateProcessedRoutesFromFiles() {
 
             batch.push(processedRoute);
 
-            if (batch.length === batchSize) {
+            if (batch.length === batchSizePhase1) {
                 console.log(`Inserting batch of ${batch.length} processed routes (Phase1)`);
                 await ProcessedRoute.insertMany(batch, { ordered: false });
                 insertedCount += batch.length;
@@ -611,16 +624,24 @@ async function populateProcessedRoutesFromFiles() {
     console.log(`📊 [Phase1] geOps-candidate routes processed: ${geOpsCandidateRoutes}. Deferred (no train_id or lookup failure): ${deferredRoutes.length}.`);
 
     let insertedDeferred = 0;
-    for (let i = 0; i < deferredRoutes.length; i++) {
-        const { route, orderedStops, bounds } = deferredRoutes[i];
-        console.log(`🛟 [Deferred Phase2] Processing ${i + 1}/${deferredRoutes.length} route_id=${route.route_id}`);
+    const PHASE2_CONCURRENCY = Math.max(1, parseInt(process.env.PHASE2_CONCURRENCY || "6", 10));
+    const PHASE2_GEOM_PARALLELISM = parseInt(process.env.PHASE2_GEOM_PARALLELISM || process.env.ROUTE_GEOM_PARALLELISM || "4", 10);
+
+    console.log(`🧵 [Phase2] Starting with concurrency=${PHASE2_CONCURRENCY}, batchSize=${batchSizePhase2}`);
+
+    let idx = 0;
+    const inFlight = new Set();
+
+    async function processOne(item, index) {
+        const { route, orderedStops, bounds } = item;
+        console.log(`🛟 [Deferred Phase2] Processing ${index + 1}/${deferredRoutes.length} route_id=${route.route_id}`);
 
         let geometryCoords = [];
         try {
             geometryCoords = await buildRouteGeometry(
                 orderedStops,
                 route.route_type,
-                2,
+                PHASE2_GEOM_PARALLELISM,
                 null // no trainId list, trigger fallbacks
             );
         } catch (err) {
@@ -647,20 +668,43 @@ async function populateProcessedRoutesFromFiles() {
         };
 
         batch.push(processedRoute);
-        if (batch.length === batchSize) {
-            console.log(`Inserting batch of ${batch.length} processed routes (Deferred Phase2)`);
-            await ProcessedRoute.insertMany(batch, { ordered: false });
-            insertedCount += batch.length;
-            insertedDeferred += batch.length;
+        if (batch.length >= batchSizePhase2) {
+            const toInsert = batch;
             batch = [];
+            try {
+                console.log(`Inserting batch of ${toInsert.length} processed routes (Deferred Phase2)`);
+                await ProcessedRoute.insertMany(toInsert, { ordered: false });
+                insertedCount += toInsert.length;
+                insertedDeferred += toInsert.length;
+            } catch (e) {
+                console.warn(`⚠️ Batch insert failed in Phase2: ${e.message}. Attempting single inserts.`);
+                for (const pr of toInsert) {
+                    try { await ProcessedRoute.create(pr); insertedCount++; insertedDeferred++; } catch {}
+                }
+            }
         }
     }
+
+    async function pump() {
+        while (idx < deferredRoutes.length && inFlight.size < PHASE2_CONCURRENCY) {
+            const curIndex = idx++;
+            const p = processOne(deferredRoutes[curIndex], curIndex).then(() => inFlight.delete(p)).catch(() => inFlight.delete(p));
+            inFlight.add(p);
+        }
+        if (inFlight.size > 0) {
+            await Promise.race(inFlight);
+            return pump();
+        }
+    }
+
+    await pump();
 
     if (batch.length > 0) {
         console.log(`Inserting final batch of ${batch.length} processed routes (Deferred Phase2)`);
         await ProcessedRoute.insertMany(batch, { ordered: false });
         insertedCount += batch.length;
         insertedDeferred += batch.length;
+        batch = [];
     }
 
     console.log(`📊 [Phase2] Deferred processed: ${insertedDeferred}`);
