@@ -135,7 +135,7 @@ async function fetchTrajectoryGeometry(train_id, gen_level = 0) {
 // Cache of train_ids that failed within this process to avoid retrying repeatedly
 const geOpsFailureCache = new Set();
 
-async function buildRouteGeometry(orderedStops, routeType = 3, parallelism = 2, trainIdOrList = null) {
+async function buildRouteGeometry(orderedStops, routeType = 3, parallelism = 2, trainIdOrList = null, opts = {}) {
     if (!orderedStops || orderedStops.length < 2) return [];
 
     // Try geOps trajectory API first
@@ -163,7 +163,12 @@ async function buildRouteGeometry(orderedStops, routeType = 3, parallelism = 2, 
             geOpsFailureCache.add(train_id);
             if (!tryAll) break; // stop after first failed candidate if disabled
         }
-        console.log("ℹ️ No usable geOps geometry found from candidates; falling back to SwissTNE/OSRM");
+        console.log("ℹ️ No usable geOps geometry found from candidates");
+    }
+
+    // If Phase 1 requires geOps-only, do not run fallbacks here
+    if (opts && opts.geOpsOnly) {
+        return null;
     }
 
     // Allow overriding parallelism via env var

@@ -551,8 +551,16 @@ async function populateProcessedRoutesFromFiles() {
                 orderedStops,
                 route.route_type,
                 2,
-                trainIdCandidates
+                trainIdCandidates,
+                { geOpsOnly: true }
             );
+
+            // If geOps did not return usable geometry, defer to Phase 2 (do not run fallbacks now)
+            if (!geometryCoords || geometryCoords.length < 2) {
+                console.log(`🕗 [Defer: geOps-failed] No usable geOps geometry for ${route.route_short_name || route.route_id}; deferring to end`);
+                deferredRoutes.push({ route, orderedStops, bounds });
+                continue;
+            }
 
             const processedRoute = {
                 route_id: route.route_id,
