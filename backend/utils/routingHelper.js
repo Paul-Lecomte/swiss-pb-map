@@ -72,7 +72,7 @@ async function fetchOSRMGeometry(batch, routeType) {
 /**
  * Fetch full trajectory geometry directly from the geOps Realtime API (with rate limit).
  */
-async function fetchTrajectoryGeometry(train_id, gen_level = 0) {
+async function fetchTrajectoryGeometry(train_id) {
     if (!train_id) return null;
 
     const GEOPS_API_KEY = process.env.GEOPS_API_KEY;
@@ -83,7 +83,6 @@ async function fetchTrajectoryGeometry(train_id, gen_level = 0) {
 
     const baseUrl = "https://api.geops.io/tracker-http/v1";
     const params = new URLSearchParams({ key: GEOPS_API_KEY });
-    if (Number.isFinite(gen_level)) params.set("gen_level", String(gen_level));
     const url = `${baseUrl}/journeys/${encodeURIComponent(train_id)}/?${params.toString()}`;
 
     await throttleRequest(); // ensures 1 request/sec
@@ -91,7 +90,7 @@ async function fetchTrajectoryGeometry(train_id, gen_level = 0) {
     try {
         console.log(`🌐 [geOps] Requesting: ${url}`);
         const resp = await axios.get(url, {
-            timeout: 100,
+            timeout: 12000,
             headers: {
                 Accept: "application/json"
             },
@@ -212,103 +211,13 @@ async function buildRouteGeometry(orderedStops, routeType = 3, parallelism = 2, 
     return mergedCoords;
 }
 
-// ---- geOps trajectories index (from local JSON snapshots) ----
-let trajectoriesIndex = null;
-let trajectoriesIndexLoaded = false;
-
+// ---- line name normalization (shared) ----
 function normalizeLineName(name) {
     if (!name) return "";
     return String(name)
         .toUpperCase()
         .replace(/\s+/g, "")
         .replace(/[.-]/g, "");
-}
-
-function loadTrajectoriesFile(filePath, index) {
-    try {
-        if (!fs.existsSync(filePath)) return;
-        const raw = fs.readFileSync(filePath, "utf8");
-        const json = JSON.parse(raw);
-        const feats = Array.isArray(json.features) ? json.features : [];
-        for (const f of feats) {
-            const props = f && f.properties ? f.properties : {};
-            const line = props.line || {};
-            const name = normalizeLineName(line.name);
-            const trainId = props.train_id;
-            if (name && trainId) {
-                if (!index.has(name)) index.set(name, new Set());
-                index.get(name).add(trainId);
-            }
-        }
-    } catch (e) {
-        console.warn(`⚠️ Failed to load trajectories from ${filePath}:`, e.message);
-    }
-}
-
-function ensureTrajectoriesIndex() {
-    if (trajectoriesIndexLoaded && trajectoriesIndex) return trajectoriesIndex;
-    trajectoriesIndex = new Map(); // Map<string, Set<string>>
-    const dataDir = path.join(__dirname, "..", "data");
-    // Prefer longer horizon first, then shorter as fallback
-    const files = [
-        path.join(dataDir, "sbb_trajectories_21h.json"),
-        path.join(dataDir, "sbb_trajectories_8h.json"),
-    ];
-    for (const fp of files) loadTrajectoriesFile(fp, trajectoriesIndex);
-    trajectoriesIndexLoaded = true;
-    console.log(`ℹ️ Trajectories index loaded with ${trajectoriesIndex.size} keys`);
-    return trajectoriesIndex;
-}
-
-async function findTrainIdByRouteName(routeShortName, routeLongName) {
-    // Backward-compatible single-id resolver: returns the first candidate if available
-    const list = await findTrainIdsByRouteName(routeShortName, routeLongName);
-    return list && list.length ? list[0] : null;
-}
-
-async function findTrainIdsByRouteName(routeShortName, routeLongName) {
-    const idx = ensureTrajectoriesIndex();
-    const maxCandidates = parseInt(process.env.GEOPS_MAX_CANDIDATES || "5", 10) || 5;
-
-    const keys = [];
-    if (routeShortName) keys.push(normalizeLineName(routeShortName));
-    if (routeLongName) keys.push(normalizeLineName(routeLongName));
-
-    const addVariant = (key, out) => {
-        const m = key.match(/^(\D+)(0*)(\d+)$/);
-        if (m) {
-            const alt = (m[1] || "") + String(parseInt(m[3], 10));
-            out.push(alt);
-        }
-    };
-
-    // Build ordered search keys: exact short, de-zero short, exact long, de-zero long
-    const searchKeys = [];
-    if (keys[0]) {
-        searchKeys.push(keys[0]);
-        addVariant(keys[0], searchKeys);
-    }
-    if (keys[1]) {
-        searchKeys.push(keys[1]);
-        addVariant(keys[1], searchKeys);
-    }
-
-    // Collect candidates preserving order and uniqueness
-    const seen = new Set();
-    const out = [];
-    for (const k of searchKeys) {
-        if (!k) continue;
-        if (idx.has(k)) {
-            for (const id of idx.get(k)) {
-                if (!seen.has(id)) {
-                    seen.add(id);
-                    out.push(id);
-                    if (out.length >= maxCandidates) return out;
-                }
-            }
-        }
-    }
-    return out;
 }
 
 // ---- geOps live trajectories feed helpers ----
@@ -502,11 +411,58 @@ function loadTenantsFromFeedData() {
 function pickNeighborTenantsFromFeed(allTenants) {
     // Prefer commonly relevant neighbors for Switzerland
     const preferred = [
-        "db", // Germany
-        "sncf", "sncf-ter", "sncf-transilien", // France
-        "trenitalia", "ti", "trenord", // Italy
-        "oebb", "obb", // Austria
-        "bvb", "bls", "tpg", "zvv" // local/regional (if exposed)
+        // Germany
+        "db",
+        "de-gtfs-de",
+
+        // France
+        "sncf",
+        "sncf-ter",
+        "sncf-transilien",
+        "france-sncf-ic",
+        "france-sncf-voyages",
+        "france-fluo-grand-est-68",
+        "france-cotentin",
+        "france-normandy",
+        "france-bordeaux-metropole",
+        "various-ile-de-france",
+        "various-ctrl",
+
+        // Italy
+        "trenitalia",
+        "toscana-trenitalia",
+        "sardinien-trains",
+        "ti",
+        "trenord",
+        "toscana-arezzo",
+        "toscana-pistoia",
+        "toscana-tft",
+        "toscana-lineeregionali",
+        "toscana-gest",
+        "toscana-prato",
+        "sardinien-arst",
+        "sardinien-cagliari",
+        "various-mailand",
+        "various-bologna",
+        "various-venice-ferry",
+        "various-rome",
+        "various-neapel",
+        "various-trento-urbano",
+
+        // Austria
+        "oebb",
+        "obb",
+        // (no explicit Austrian feeds found — possibly covered by de-gtfs-de)
+
+        // Liechtenstein
+        // (covered by Swiss GTFS — no explicit feeds found)
+
+        // Switzerland (local / regional)
+        "bvb",
+        "bls",
+        "tpg",
+        "zvv",
+        "sbb" // added for completeness
     ].map(s => s.toLowerCase());
     const set = new Set((allTenants || []).map(s => s.toLowerCase()));
     return preferred.filter(t => set.has(t));
@@ -587,8 +543,6 @@ module.exports = {
     buildRouteGeometry,
     mapRouteTypeToProfile,
     fetchTrajectoryGeometry,
-    findTrainIdByRouteName,
-    findTrainIdsByRouteName,
     fetchLiveTrajectoriesIndex,
     findTrainIdsByRouteNameLive,
     fetchTenantTrajectoriesIndex,

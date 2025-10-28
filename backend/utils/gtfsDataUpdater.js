@@ -27,7 +27,7 @@ const stream = require('stream');
 const cheerio = require('cheerio');
 const mongoose = require('mongoose');
 const connectDB = require('../config/dbConnection');
-const { buildRouteGeometry, mapRouteTypeToProfile, findTrainIdByRouteName, findTrainIdsByRouteName, findTrainIdsByRouteNameLive, findTrainIdsByRouteNameMultiTenant } = require('./routingHelper');
+const { buildRouteGeometry, mapRouteTypeToProfile, findTrainIdsByRouteNameLive, findTrainIdsByRouteNameMultiTenant } = require('./routingHelper');
 
 // Import models
 const Agency = require('../model/agencyModel');
@@ -637,15 +637,66 @@ async function populateProcessedRoutesFromFiles() {
         console.log(`🛟 [Deferred Phase2] Processing ${index + 1}/${deferredRoutes.length} route_id=${route.route_id}`);
 
         let geometryCoords = [];
+
+        // First: re-try geOps in Phase 2 using live feeds (SBB, then multi-tenant)
         try {
-            geometryCoords = await buildRouteGeometry(
-                orderedStops,
-                route.route_type,
-                PHASE2_GEOM_PARALLELISM,
-                null // no trainId list, trigger fallbacks
-            );
-        } catch (err) {
-            console.warn(`⚠️ [Deferred Phase2] Fallback build failed for ${route.route_id}: ${err.message}. Using straight lines.`);
+            let retryCandidates = [];
+            try {
+                retryCandidates = await findTrainIdsByRouteNameLive(
+                    route.route_short_name,
+                    route.route_long_name,
+                    { bounds }
+                );
+                if (retryCandidates && retryCandidates.length) {
+                    const prev = retryCandidates.slice(0, 5).join(", ");
+                    console.log(`🔁 [Phase2 geOps-retry] [Live] candidates for ${route.route_short_name || route.route_id}: [${prev}] (${retryCandidates.length} total)`);
+                } else {
+                    const multi = await findTrainIdsByRouteNameMultiTenant(
+                        route.route_short_name,
+                        route.route_long_name,
+                        { bounds }
+                    );
+                    if (multi && multi.length) {
+                        retryCandidates = multi;
+                        const prev = retryCandidates.slice(0, 5).join(", ");
+                        console.log(`🔁 [Phase2 geOps-retry] [Live Multi] candidates for ${route.route_short_name || route.route_id}: [${prev}] (${retryCandidates.length} total)`);
+                    } else {
+                        console.log(`ℹ️ [Phase2 geOps-retry] No live candidates for ${route.route_short_name || route.route_id}`);
+                    }
+                }
+            } catch (e) {
+                console.warn(`⚠️ [Phase2 geOps-retry] Lookup failed for ${route.route_short_name || route.route_id}: ${e.message}`);
+            }
+
+            if (retryCandidates && retryCandidates.length) {
+                const apiCoords = await buildRouteGeometry(
+                    orderedStops,
+                    route.route_type,
+                    PHASE2_GEOM_PARALLELISM,
+                    retryCandidates,
+                    { geOpsOnly: true }
+                );
+                if (apiCoords && apiCoords.length > 1) {
+                    geometryCoords = apiCoords;
+                    console.log(`✅ [Phase2 geOps-retry] Using geOps geometry for ${route.route_short_name || route.route_id}`);
+                }
+            }
+        } catch (e) {
+            console.warn(`⚠️ [Phase2 geOps-retry] Attempt error for ${route.route_id}: ${e.message}`);
+        }
+
+        // If geOps still not available, run fallbacks now
+        if (!geometryCoords || geometryCoords.length < 2) {
+            try {
+                geometryCoords = await buildRouteGeometry(
+                    orderedStops,
+                    route.route_type,
+                    PHASE2_GEOM_PARALLELISM,
+                    null // no trainId list, trigger fallbacks
+                );
+            } catch (err) {
+                console.warn(`⚠️ [Deferred Phase2] Fallback build failed for ${route.route_id}: ${err.message}. Using straight lines.`);
+            }
         }
 
         const processedRoute = {
