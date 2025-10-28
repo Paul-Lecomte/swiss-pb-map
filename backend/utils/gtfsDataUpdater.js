@@ -27,7 +27,7 @@ const stream = require('stream');
 const cheerio = require('cheerio');
 const mongoose = require('mongoose');
 const connectDB = require('../config/dbConnection');
-const { buildRouteGeometry, mapRouteTypeToProfile, findTrainIdsByRouteNameLive, findTrainIdsByRouteNameMultiTenant, toWGS84IfNeeded, isLikelyLonLat } = require('./routingHelper');
+const { buildRouteGeometry, mapRouteTypeToProfile, findTrainIdsByRouteNameLive, findTrainIdsByRouteNameMultiTenant, toWGS84IfNeeded, isLikelyLonLat, fetchMultiTenantTrajectoriesIndex } = require('./routingHelper');
 
 // Import models
 const Agency = require('../model/agencyModel');
@@ -453,6 +453,13 @@ async function processStopBatch(stopsBatch, tripMap, routeMap, batchNumber) {
 //TODO : Fix current problem with the swisstne data not giving out accurate results for some routes
 
 async function populateProcessedRoutesFromFiles() {
+    // Cache for lines with no geOps candidates discovered in Phase 1
+    const NO_CANDIDATE_CACHE = new Map(); // key=normalized line name -> timestamp ms
+    const GEOPS_RETRY_TTL_MS = parseInt(process.env.GEOPS_RETRY_TTL_MS || "300000", 10);
+    function normalizeLineNameLocal(name) {
+        if (!name) return "";
+        return String(name).toUpperCase().replace(/\s+/g, "").replace(/[.-]/g, "");
+    }
     console.log('Starting file-based population of ProcessedRoute (memory-efficient)...');
     await ProcessedRoute.deleteMany({});
     console.log('Cleared ProcessedRoute collection.');
@@ -466,7 +473,7 @@ async function populateProcessedRoutesFromFiles() {
     const stopMap = await buildStopMap('stops.txt');
 
     const batchSizePhase1 = parseInt(process.env.ROUTES_BATCH_SIZE_PHASE1 || process.env.ROUTES_BATCH_SIZE || "50", 10);
-    const batchSizePhase2 = parseInt(process.env.ROUTES_BATCH_SIZE_PHASE2 || process.env.ROUTES_BATCH_SIZE || "100", 10);
+    const batchSizePhase2 = parseInt(process.env.ROUTES_BATCH_SIZE_PHASE2 || process.env.ROUTES_BATCH_SIZE || "50", 10);
     let batch = [];
     let insertedCount = 0;
 
@@ -547,6 +554,12 @@ async function populateProcessedRoutesFromFiles() {
                         console.log(`🔎 [Live Multi] geOps candidates for ${route.route_short_name || route.route_id}: [${preview}] (${trainIdCandidates.length} total)`);
                     } else {
                         console.log(`🕗 [Defer] No [Live] geOps train_id candidates for ${route.route_short_name || route.route_id}; deferring to end`);
+                        // Remember lines with no candidates to avoid geOps-retry later (TTL)
+                        const tNow = Date.now();
+                        const ns = normalizeLineNameLocal(route.route_short_name);
+                        const nl = normalizeLineNameLocal(route.route_long_name);
+                        if (ns) NO_CANDIDATE_CACHE.set(ns, tNow);
+                        if (nl) NO_CANDIDATE_CACHE.set(nl, tNow);
                         deferredRoutes.push({ route, orderedStops, bounds });
                         continue; // do not compute fallbacks now
                     }
@@ -631,10 +644,69 @@ async function populateProcessedRoutesFromFiles() {
     console.log(`📊 [Phase1] geOps-candidate routes processed: ${geOpsCandidateRoutes}. Deferred (no train_id or lookup failure): ${deferredRoutes.length}.`);
 
     let insertedDeferred = 0;
-    const PHASE2_CONCURRENCY = Math.max(1, parseInt(process.env.PHASE2_CONCURRENCY || "6", 10));
+    const PHASE2_CONCURRENCY = Math.max(1, parseInt(process.env.PHASE2_CONCURRENCY || "8", 10));
     const PHASE2_GEOM_PARALLELISM = parseInt(process.env.PHASE2_GEOM_PARALLELISM || process.env.ROUTE_GEOM_PARALLELISM || "4", 10);
+    const PHASE2_SKIP_GEOPS = String(process.env.PHASE2_SKIP_GEOPS || "true").toLowerCase() !== "false";
 
-    console.log(`🧵 [Phase2] Starting with concurrency=${PHASE2_CONCURRENCY}, batchSize=${batchSizePhase2}`);
+    console.log(`🧵 [Phase2] Starting with concurrency=${PHASE2_CONCURRENCY}, batchSize=${batchSizePhase2}${PHASE2_SKIP_GEOPS ? ' | geOps-retry=SKIPPED' : ''}`);
+
+    // Prefetch multi-tenant indices once to reduce repeated API calls (only if not skipping geOps in Phase 2)
+    if (!PHASE2_SKIP_GEOPS) {
+        try {
+            await fetchMultiTenantTrajectoriesIndex();
+        } catch {}
+    }
+
+    const PHASE2_ROUTE_TIMEOUT_ENABLED = (() => {
+        const raw = process.env.PHASE2_ROUTE_TIMEOUT_ENABLED;
+        if (raw === undefined || raw === null) return true; // par défaut activé
+        return String(raw).toLowerCase() !== 'false';
+    })();
+
+    const PHASE2_ROUTE_TIMEOUT_MS = (() => {
+        const v = parseInt(process.env.PHASE2_ROUTE_TIMEOUT_MS || "120000", 10);
+        return isNaN(v) ? 120000 : v;
+    })();
+
+    function nowMs() { return Date.now(); }
+    function msStr(ms) { return `${Math.round(ms)}ms`; }
+
+    async function withTimeout(promise, timeoutMs) {
+        // Si le timeout global est désactivé ou la valeur de timeout <= 0 => attendre la promesse sans limite
+        if (!PHASE2_ROUTE_TIMEOUT_ENABLED || !timeoutMs || timeoutMs <= 0) {
+            try {
+                const res = await promise;
+                return { timedOut: false, result: res };
+            } catch (err) {
+                throw err;
+            }
+        }
+
+        let toHandle;
+        const timeoutPromise = new Promise(resolve => {
+            toHandle = setTimeout(() => resolve({ timedOut: true, result: null }), timeoutMs);
+        });
+
+        const result = await Promise.race([promise.then(r => ({ timedOut: false, result: r })), timeoutPromise]);
+        if (toHandle) clearTimeout(toHandle);
+        return result;
+    }
+
+    let processedPhase2 = 0;
+    let heartbeatTimer = null;
+    function startHeartbeat(total) {
+        const startTs = nowMs();
+        heartbeatTimer = setInterval(() => {
+            const elapsed = (nowMs() - startTs) / 1000;
+            const rate = processedPhase2 / Math.max(1, elapsed);
+            const remaining = total - processedPhase2;
+            const etaSec = rate > 0 ? Math.round(remaining / rate) : 0;
+            console.log(`⏱️ [Phase2] Progress ${processedPhase2}/${total} | elapsed=${Math.round(elapsed)}s | eta≈${etaSec}s`);
+        }, 60000);
+    }
+    function stopHeartbeat() { if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; } }
+
+    startHeartbeat(deferredRoutes.length);
 
     let idx = 0;
     const inFlight = new Set();
@@ -643,67 +715,121 @@ async function populateProcessedRoutesFromFiles() {
         const { route, orderedStops, bounds } = item;
         console.log(`🛟 [Deferred Phase2] Processing ${index + 1}/${deferredRoutes.length} route_id=${route.route_id}`);
 
+        const tStart = nowMs();
+        let tGeOps = 0, tBuild = 0, tInsert = 0;
         let geometryCoords = [];
 
-        // First: re-try geOps in Phase 2 using live feeds (SBB, then multi-tenant)
-        try {
-            let retryCandidates = [];
+        // First: re-try geOps in Phase 2 using live feeds (SBB, then multi-tenant) — optionally skipped
+        if (!PHASE2_SKIP_GEOPS) {
             try {
-                retryCandidates = await findTrainIdsByRouteNameLive(
-                    route.route_short_name,
-                    route.route_long_name,
-                    { bounds }
-                );
-                if (retryCandidates && retryCandidates.length) {
-                    const prev = retryCandidates.slice(0, 5).join(", ");
-                    console.log(`🔁 [Phase2 geOps-retry] [Live] candidates for ${route.route_short_name || route.route_id}: [${prev}] (${retryCandidates.length} total)`);
-                } else {
-                    const multi = await findTrainIdsByRouteNameMultiTenant(
-                        route.route_short_name,
-                        route.route_long_name,
-                        { bounds }
-                    );
-                    if (multi && multi.length) {
-                        retryCandidates = multi;
-                        const prev = retryCandidates.slice(0, 5).join(", ");
-                        console.log(`🔁 [Phase2 geOps-retry] [Live Multi] candidates for ${route.route_short_name || route.route_id}: [${prev}] (${retryCandidates.length} total)`);
-                    } else {
-                        console.log(`ℹ️ [Phase2 geOps-retry] No live candidates for ${route.route_short_name || route.route_id}`);
+                let retryCandidates = [];
+
+                // Skip geOps-retry if Phase 1 already had no candidates for this line name and TTL not expired
+                const tNow = Date.now();
+                const ns = normalizeLineNameLocal(route.route_short_name);
+                const nl = normalizeLineNameLocal(route.route_long_name);
+                const tsNs = ns ? NO_CANDIDATE_CACHE.get(ns) : null;
+                const tsNl = nl ? NO_CANDIDATE_CACHE.get(nl) : null;
+                const skipRetry = ((tsNs && (tNow - tsNs) < GEOPS_RETRY_TTL_MS) || (tsNl && (tNow - tsNl) < GEOPS_RETRY_TTL_MS));
+
+                const t0 = nowMs();
+                if (!skipRetry) {
+                    try {
+                        retryCandidates = await findTrainIdsByRouteNameLive(
+                            route.route_short_name,
+                            route.route_long_name,
+                            { bounds }
+                        );
+                        if (retryCandidates && retryCandidates.length) {
+                            const prev = retryCandidates.slice(0, 5).join(", ");
+                            console.log(`🔁 [Phase2 geOps-retry] [Live] candidates for ${route.route_short_name || route.route_id}: [${prev}] (${retryCandidates.length} total)`);
+                        } else {
+                            const multi = await findTrainIdsByRouteNameMultiTenant(
+                                route.route_short_name,
+                                route.route_long_name,
+                                { bounds }
+                            );
+                            if (multi && multi.length) {
+                                retryCandidates = multi;
+                                const prev = retryCandidates.slice(0, 5).join(", ");
+                                console.log(`🔁 [Phase2 geOps-retry] [Live Multi] candidates for ${route.route_short_name || route.route_id}: [${prev}] (${retryCandidates.length} total)`);
+                            } else {
+                                console.log(`ℹ️ [Phase2 geOps-retry] No live candidates for ${route.route_short_name || route.route_id}`);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn(`⚠️ [Phase2 geOps-retry] Lookup failed for ${route.route_short_name || route.route_id}: ${e.message}`);
                     }
+                } else {
+                    console.log(`⏭️  [Phase2 geOps-retry] Skipping geOps lookup for ${route.route_short_name || route.route_id} (cached no-candidate within TTL)`);
+                }
+
+                if (retryCandidates && retryCandidates.length) {
+                    const res = await withTimeout(
+                        buildRouteGeometry(
+                            orderedStops,
+                            route.route_type,
+                            PHASE2_GEOM_PARALLELISM,
+                            retryCandidates,
+                            { geOpsOnly: true }
+                        ),
+                        Math.max(20000, Math.floor(PHASE2_ROUTE_TIMEOUT_MS / 2))
+                    );
+                    tGeOps += (nowMs() - t0);
+                    if (!res.timedOut) {
+                        const apiCoords = res.result;
+                        if (apiCoords && apiCoords.length > 1) {
+                            geometryCoords = apiCoords;
+                            console.log(`✅ [Phase2 geOps-retry] Using geOps geometry for ${route.route_short_name || route.route_id}`);
+                        }
+                    } else {
+                        console.log(`⏱️ [Phase2 geOps-retry] Timed out for ${route.route_short_name || route.route_id} after ${msStr(Math.max(20000, Math.floor(PHASE2_ROUTE_TIMEOUT_MS / 2)))}`);
+                    }
+                } else {
+                    tGeOps += (nowMs() - t0);
                 }
             } catch (e) {
-                console.warn(`⚠️ [Phase2 geOps-retry] Lookup failed for ${route.route_short_name || route.route_id}: ${e.message}`);
+                console.warn(`⚠️ [Phase2 geOps-retry] Attempt error for ${route.route_id}: ${e.message}`);
             }
-
-            if (retryCandidates && retryCandidates.length) {
-                const apiCoords = await buildRouteGeometry(
-                    orderedStops,
-                    route.route_type,
-                    PHASE2_GEOM_PARALLELISM,
-                    retryCandidates,
-                    { geOpsOnly: true }
-                );
-                if (apiCoords && apiCoords.length > 1) {
-                    geometryCoords = apiCoords;
-                    console.log(`✅ [Phase2 geOps-retry] Using geOps geometry for ${route.route_short_name || route.route_id}`);
-                }
-            }
-        } catch (e) {
-            console.warn(`⚠️ [Phase2 geOps-retry] Attempt error for ${route.route_id}: ${e.message}`);
+        } else {
+            // Skipped by configuration
+            console.log(`⏭️  [Phase2] geOps retry skipped by PHASE2_SKIP_GEOPS for ${route.route_short_name || route.route_id}`);
         }
 
-        // If geOps still not available, run fallbacks now
+        // If geOps still not available, run fallbacks now with a watchdog
         if (!geometryCoords || geometryCoords.length < 2) {
+            const t1 = nowMs();
             try {
-                geometryCoords = await buildRouteGeometry(
-                    orderedStops,
-                    route.route_type,
-                    PHASE2_GEOM_PARALLELISM,
-                    null // no trainId list, trigger fallbacks
+                const res = await withTimeout(
+                    buildRouteGeometry(
+                        orderedStops,
+                        route.route_type,
+                        PHASE2_GEOM_PARALLELISM,
+                        null // no trainId list, trigger fallbacks
+                    ),
+                    PHASE2_ROUTE_TIMEOUT_MS
                 );
+                if (!res.timedOut) {
+                    geometryCoords = res.result;
+                } else {
+                    console.warn(`⏱️ [Deferred Phase2] Route timeout after ${msStr(PHASE2_ROUTE_TIMEOUT_MS)} for ${route.route_id}. Using straight lines.`);
+                    geometryCoords = null;
+                }
             } catch (err) {
                 console.warn(`⚠️ [Deferred Phase2] Fallback build failed for ${route.route_id}: ${err.message}. Using straight lines.`);
+                geometryCoords = null;
+            } finally {
+                tBuild += (nowMs() - t1);
             }
+        }
+
+        // Ensure WGS84 and fill straight line if still missing
+        let finalCoords = (geometryCoords && geometryCoords.length)
+            ? geometryCoords
+            : orderedStops.map(s => [s.stop_lon, s.stop_lat]);
+        if (finalCoords.length && !isLikelyLonLat(finalCoords[0])) {
+            finalCoords = toWGS84IfNeeded(finalCoords);
+            console.log(`🌍 [Phase2] Converted geometry to WGS84 for ${route.route_short_name || route.route_id}`);
         }
 
         const processedRoute = {
@@ -719,9 +845,7 @@ async function populateProcessedRoutesFromFiles() {
             bounds,
             geometry: {
                 type: "LineString",
-                coordinates: geometryCoords && geometryCoords.length
-                    ? geometryCoords
-                    : orderedStops.map(s => [s.stop_lon, s.stop_lat])
+                coordinates: finalCoords
             }
         };
 
@@ -741,6 +865,8 @@ async function populateProcessedRoutesFromFiles() {
                 }
             }
         }
+        // Update Phase 2 progress counter for heartbeat
+        processedPhase2++;
     }
 
     async function pump() {

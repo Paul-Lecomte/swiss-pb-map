@@ -10,7 +10,7 @@ proj4.defs(
 );
 const { buildGeometryFromSwissTNE } = require("./swisstneHelper");
 
-// Simple throttle to ensure we do at most 1 request/sec to geOps API
+// Simple throttle
 let lastRequestTime = 0;
 async function throttleRequest() {
     const now = Date.now();
