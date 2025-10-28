@@ -276,7 +276,7 @@ function findNearestEdge(point, index) {
         const searchBBox2 = [lon - dLon2, lat - dLat2, lon + dLon2, lat + dLon2];
         const candidates2 = index.search(searchBBox2);
         for (const edge of (candidates2.features || candidates2)) {
-            const dist = turf.pointToLineDistance(point, edge, { units: "meters" });
+            const dist = turf.pointToLineDistance(point, edge, { units: 'meters' });
             if (dist < minDist) {
                 minDist = dist;
                 nearest = edge;
@@ -305,11 +305,13 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
     const hardMaxNodes = 1500000;
     const DEBUG = Boolean(process.env.SWISSTNE_DEBUG === "1" || process.env.SWISSTNE_DEBUG === "true");
     const NO_LIMITS = false;
-    const maxCandidates = 12000;
+    const maxCandidates = 40000; // raised from 12k
 
-    const dynamicScaleOn = false;
-    const scaleK = 0.3;
-    const widenFactor = 1.0;
+    // === Tweaks applied for long legs ===
+    const dynamicScaleOn = true; // enable dynamic corridor scaling
+    const scaleK = 0.5;         // corridor grows faster with leg distance
+    const widenFactor = 0.3;    // more aggressive expansion per attempt
+    // =================================================
 
     function getMaxCorridorKm(baseType) {
         const envRoad = 2500;
@@ -328,13 +330,19 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
 
     const outCoords = [];
     // Helper: compute corridor bbox around two stops in WGS84
+    // Improved: use lat/lon buffer conversion to degrees and consider mean latitude for lon scaling.
     function makeCorridorBBox(a, b, bufKm) {
-        const line = turf.lineString([
-            [a.stop_lon, a.stop_lat],
-            [b.stop_lon, b.stop_lat]
-        ]);
-        const buffered = turf.buffer(line, bufKm, { units: 'kilometers' });
-        return turf.bbox(buffered);
+        const lon1 = a.stop_lon, lat1 = a.stop_lat;
+        const lon2 = b.stop_lon, lat2 = b.stop_lat;
+        const minLon = Math.min(lon1, lon2);
+        const maxLon = Math.max(lon1, lon2);
+        const minLat = Math.min(lat1, lat2);
+        const maxLat = Math.max(lat1, lat2);
+        // convert buffer km to degree approx
+        const meanLat = (lat1 + lat2) / 2;
+        const dLat = bufKm / 111; // ~111 km per degree latitude
+        const dLon = bufKm / (111 * Math.max(Math.cos(meanLat * Math.PI / 180), 0.1));
+        return [minLon - dLon, minLat - dLat, maxLon + dLon, maxLat + dLat];
     }
 
 // Fast geodesic helpers (avoid turf.length per-edge overhead)
@@ -609,7 +617,7 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
         const usedCorridorKm = dynamicScaleOn ? Math.min(maxCorridorKm, Math.max(baseCorridor, legDistKm * scaleK)) : baseCorridor;
         let bbox = makeCorridorBBox(a, b, usedCorridorKm);
 
-        const maxAttempts = parseInt(process.env.SWISSTNE_MAX_ATTEMPTS || '5', 10);
+        const maxAttempts = parseInt(process.env.SWISSTNE_MAX_ATTEMPTS || '8', 10); // raised default attempts
         let attempt = 0;
         let succeeded = false;
         if (DEBUG) {
@@ -617,9 +625,9 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
         }
         while (attempt < maxAttempts && !succeeded) {
             // scale candidates and node cap with distance; on last attempt lift caps
-            const scaledCandidateCap = NO_LIMITS ? null : ((attempt === maxAttempts - 1)
-                ? null
-                : Math.min(5000, Math.floor(maxCandidates + Math.max(0, legDistKm) * 150)));
+            // make candidate cap adaptive to leg distance; for very long legs allow null (no cap)
+            const adaptiveCap = (legDistKm > 100) ? null : Math.min(maxCandidates, Math.floor(5000 + Math.max(0, legDistKm) * 150));
+            const scaledCandidateCap = NO_LIMITS ? null : ((attempt === maxAttempts - 1) ? null : adaptiveCap);
             currentMaxNodes = NO_LIMITS ? null : ((attempt === maxAttempts - 1)
                 ? hardMaxNodes
                 : Math.min(hardMaxNodes, Math.floor(maxNodes + Math.max(0, legDistKm) * 5000)));
@@ -627,12 +635,13 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
             const rawCandidates = index.search(bbox);
             const anchor = [ (a.stop_lon + b.stop_lon) / 2, (a.stop_lat + b.stop_lat) / 2 ];
             const candidates = scaledCandidateCap ? limitCandidatesByAnchor(rawCandidates, anchor, scaledCandidateCap) : (rawCandidates.features || rawCandidates);
-            if (!candidates || (candidates.features || candidates).length === 0) {
+            const candCount = (candidates && (candidates.features || candidates).length) || (Array.isArray(candidates) ? candidates.length : 0);
+            if (!candidates || candCount === 0) {
                 // widen corridor and retry
                 attempt++;
                 const widen = usedCorridorKm * Math.pow(1 + Math.max(0.1, widenFactor), attempt);
                 bbox = makeCorridorBBox(a, b, Math.min(maxCorridorKm, widen));
-                if (DEBUG) console.log(`[SwissTNE]  widen#${attempt} bbox, candidates=0`);
+                if (DEBUG) console.log(`[SwissTNE]  widen#${attempt} bbox, candidates=0 (widen->${widen.toFixed(2)}km)`);
                 continue;
             }
             const { graph, edgeById, degree } = buildGraph(candidates);
@@ -685,7 +694,8 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
                 const hugeCorridorKm = Math.min(getMaxCorridorKm(baseType), Math.max(usedCorridorKm * 8, 15));
                 const hugeBBox = makeCorridorBBox(a, b, hugeCorridorKm);
                 const hugeCandidates = index.search(hugeBBox);
-                if (hugeCandidates && (hugeCandidates.features || hugeCandidates).length > 0) {
+                const hugeCount = (hugeCandidates && ((hugeCandidates.features || hugeCandidates).length || hugeCandidates.length)) || 0;
+                if (hugeCandidates && hugeCount > 0) {
                     const { graph: g2, edgeById: eb2, degree: deg2 } = buildGraph(hugeCandidates);
                     const snapA2 = snapStopToNode(a, hugeBBox, deg2, prevEndNodeId, g2, routeType);
                     const snapB2 = snapStopToNode(b, hugeBBox, deg2, null, g2, routeType);
@@ -723,10 +733,18 @@ async function buildGeometryFromSwissTNE(orderedStops, routeType) {
                     const segEnd = [b.stop_lon, b.stop_lat];
                     if (!last || last[0] !== segStart[0] || last[1] !== segStart[1]) outCoords.push(segStart);
                     outCoords.push(segEnd);
+                    // straight-line fallback breaks graph continuity
+                    prevEndNodeId = null;
                     if (DEBUG) console.log(`[SwissTNE] Allowed straight-line fallback for international leg (${aInCH}, ${bInCH})`);
                 } else {
-                    // If we appended nearest edges but didn't find both, do not add straight line — break continuity and continue
-                    prevEndNodeId = null; // reset continuity on fallback
+                    // If we appended nearest edges but didn't find both, do not add straight line — try to preserve continuity where possible
+                    // Only clear prevEndNodeId if we didn't append any nearest edges (no local context)
+                    if (!ea && !eb) {
+                        prevEndNodeId = null; // reset continuity on fallback when nothing was appended
+                    } else {
+                        // keep prevEndNodeId as-is to allow chaining if at least one local edge was appended
+                        // (this helps preserve continuity across partially-matched legs)
+                    }
                     if (DEBUG) console.log(`[SwissTNE] FALLBACK used without straight-line (ea=${!!ea}, eb=${!!eb})`);
                 }
             }

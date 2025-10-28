@@ -27,7 +27,7 @@ const stream = require('stream');
 const cheerio = require('cheerio');
 const mongoose = require('mongoose');
 const connectDB = require('../config/dbConnection');
-const { buildRouteGeometry, mapRouteTypeToProfile } = require('./routingHelper');
+const { buildRouteGeometry, mapRouteTypeToProfile, findTrainIdByRouteName, findTrainIdsByRouteName, findTrainIdsByRouteNameLive } = require('./routingHelper');
 
 // Import models
 const Agency = require('../model/agencyModel');
@@ -513,16 +513,29 @@ async function populateProcessedRoutesFromFiles() {
             try {
                 console.log(`➡️  Computing geometry for route_type=${route.route_type} (${orderedStops.length} stops)...`);
 
-                // 🟢 Try using the new Swiss trajectory API first (if train_id available)
-                // We’ll assume the GTFS trip_id or route_id can serve as the `train_id`
-                // (you can adjust this mapping depending on your GTFS data)
-                const trainIdCandidate = mainTripId || route.route_id;
+                // 🟢 Try using geOps live trajectories feed to discover train_id by line name
+                let trainIdCandidates = [];
+                try {
+                    trainIdCandidates = await findTrainIdsByRouteNameLive(
+                        route.route_short_name,
+                        route.route_long_name,
+                        { bounds }
+                    );
+                    if (trainIdCandidates && trainIdCandidates.length) {
+                        const preview = trainIdCandidates.slice(0, 5).join(", ");
+                        console.log(`🔎 [Live] geOps candidates for ${route.route_short_name || route.route_id}: [${preview}] (${trainIdCandidates.length} total)`);
+                    } else {
+                        console.log(`ℹ️ No [Live] geOps train_id candidates for ${route.route_short_name || route.route_id}; will use SwissTNE/OSRM`);
+                    }
+                } catch (e) {
+                    console.warn(`⚠️ [Live] train_id lookup failed for ${route.route_short_name || route.route_id}:`, e.message);
+                }
 
                 geometryCoords = await buildRouteGeometry(
                     orderedStops,
                     route.route_type,
                     2,
-                    trainIdCandidate
+                    trainIdCandidates
                 );
 
             } catch (err) {
