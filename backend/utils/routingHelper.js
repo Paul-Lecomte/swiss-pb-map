@@ -2,6 +2,12 @@ const axios = require("axios");
 require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
+const proj4 = require("proj4");
+// Define LV95 (EPSG:2056) to support detection/conversion when needed
+proj4.defs(
+    "EPSG:2056",
+    "+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs"
+);
 const { buildGeometryFromSwissTNE } = require("./swisstneHelper");
 
 // Simple throttle to ensure we do at most 1 request/sec to geOps API
@@ -113,7 +119,11 @@ async function fetchTrajectoryGeometry(train_id) {
                     }
                 }
             }
-            if (geometries.length > 1) return geometries;
+            if (geometries.length > 1) {
+                // Ensure coordinates are WGS84 lon/lat for frontend
+                const wgs = toWGS84IfNeeded(geometries);
+                return wgs;
+            }
         }
 
         throw new Error("No valid geometry in geOps response");
@@ -209,6 +219,54 @@ async function buildRouteGeometry(orderedStops, routeType = 3, parallelism = 2, 
     }
 
     return mergedCoords;
+}
+
+// ---- coordinate CRS helpers ----
+const WEBM_MAX = 20037508.342789244; // EPSG:3857 bounds in meters
+function isLikelyLonLat(pair) {
+    if (!pair || pair.length < 2) return false;
+    const x = Number(pair[0]);
+    const y = Number(pair[1]);
+    return Number.isFinite(x) && Number.isFinite(y) && Math.abs(x) <= 180 && Math.abs(y) <= 90;
+}
+function isLikelyWebMercator(pair) {
+    if (!pair || pair.length < 2) return false;
+    const x = Number(pair[0]);
+    const y = Number(pair[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+    // inside web mercator global limits and outside lon/lat range
+    return Math.abs(x) <= WEBM_MAX && Math.abs(y) <= WEBM_MAX && (Math.abs(x) > 180 || Math.abs(y) > 90);
+}
+function toWGS84IfNeeded(coords) {
+    if (!Array.isArray(coords) || coords.length === 0) return coords || [];
+    // Peek a few samples to decide dominant CRS
+    const sample = coords[0];
+    const sample2 = coords[Math.floor(coords.length / 2)] || sample;
+    const sample3 = coords[coords.length - 1] || sample;
+    const samples = [sample, sample2, sample3];
+    const lonlatVotes = samples.filter(isLikelyLonLat).length;
+    const webmVotes = samples.filter(isLikelyWebMercator).length;
+
+    if (lonlatVotes >= webmVotes) {
+        // Assume already lon/lat
+        return coords;
+    }
+
+    // Convert any point that looks like WebMercator; leave others as-is
+    let converted = 0;
+    const out = coords.map((p) => {
+        if (isLikelyWebMercator(p)) {
+            const res = proj4("EPSG:3857", "WGS84", [p[0], p[1]]);
+            converted++;
+            return [res[0], res[1]];
+        }
+        return p;
+    });
+
+    if (converted > 0) {
+        console.log(`🗺️ Converted ${converted}/${coords.length} coordinates from EPSG:3857 to WGS84`);
+    }
+    return out;
 }
 
 // ---- line name normalization (shared) ----
@@ -548,4 +606,8 @@ module.exports = {
     fetchTenantTrajectoriesIndex,
     fetchMultiTenantTrajectoriesIndex,
     findTrainIdsByRouteNameMultiTenant,
+    // export CRS helpers for defensive checks at insertion time
+    toWGS84IfNeeded,
+    isLikelyLonLat,
+    isLikelyWebMercator,
 };

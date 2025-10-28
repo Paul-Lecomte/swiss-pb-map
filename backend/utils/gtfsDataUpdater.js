@@ -27,7 +27,7 @@ const stream = require('stream');
 const cheerio = require('cheerio');
 const mongoose = require('mongoose');
 const connectDB = require('../config/dbConnection');
-const { buildRouteGeometry, mapRouteTypeToProfile, findTrainIdsByRouteNameLive, findTrainIdsByRouteNameMultiTenant } = require('./routingHelper');
+const { buildRouteGeometry, mapRouteTypeToProfile, findTrainIdsByRouteNameLive, findTrainIdsByRouteNameMultiTenant, toWGS84IfNeeded, isLikelyLonLat } = require('./routingHelper');
 
 // Import models
 const Agency = require('../model/agencyModel');
@@ -575,6 +575,15 @@ async function populateProcessedRoutesFromFiles() {
                 continue;
             }
 
+            // Ensure geometry is stored as [lon, lat] (WGS84)
+            let coordsPhase1 = (geometryCoords && geometryCoords.length)
+                ? geometryCoords
+                : orderedStops.map(s => [s.stop_lon, s.stop_lat]);
+            if (coordsPhase1.length && !isLikelyLonLat(coordsPhase1[0])) {
+                coordsPhase1 = toWGS84IfNeeded(coordsPhase1);
+                console.log(`🌍 [Phase1] Converted geometry to WGS84 for ${route.route_short_name || route.route_id}`);
+            }
+
             const processedRoute = {
                 route_id: route.route_id,
                 agency_id: route.agency_id,
@@ -588,9 +597,7 @@ async function populateProcessedRoutesFromFiles() {
                 bounds,
                 geometry: {
                     type: "LineString",
-                    coordinates: geometryCoords && geometryCoords.length
-                        ? geometryCoords
-                        : orderedStops.map(s => [s.stop_lon, s.stop_lat])
+                    coordinates: coordsPhase1
                 }
             };
 
