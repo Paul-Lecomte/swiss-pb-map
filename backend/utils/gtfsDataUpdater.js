@@ -659,7 +659,7 @@ async function populateProcessedRoutesFromFiles() {
 
     const PHASE2_ROUTE_TIMEOUT_ENABLED = (() => {
         const raw = process.env.PHASE2_ROUTE_TIMEOUT_ENABLED;
-        if (raw === undefined || raw === null) return true; // par défaut activé
+        if (raw === undefined || raw === null) return false; // par défaut activé
         return String(raw).toLowerCase() !== 'false';
     })();
 
