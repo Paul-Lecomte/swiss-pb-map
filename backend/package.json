@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",
-    "update-gtfs": "node --max-old-space-size=16384 utils/gtfsDataUpdater.js --processedroutes"
+    "update-gtfs": "node --max-old-space-size=32768 utils/gtfsDataUpdater.js --processedroutes"
   },
   "author": "Lecomte Paul",
   "license": "MIT",
