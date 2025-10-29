@@ -27,7 +27,7 @@ const stream = require('stream');
 const cheerio = require('cheerio');
 const mongoose = require('mongoose');
 const connectDB = require('../config/dbConnection');
-const { buildRouteGeometry, mapRouteTypeToProfile, findTrainIdsByRouteNameLive, findTrainIdsByRouteNameMultiTenant, toWGS84IfNeeded, isLikelyLonLat, fetchMultiTenantTrajectoriesIndex } = require('./routingHelper');
+const { buildRouteGeometry, mapRouteTypeToProfile, findTrainIdsByRouteNameLive, findTrainIdsByRouteNameMultiTenant, findTrainIdsByRouteNameWithWaves, toWGS84IfNeeded, isLikelyLonLat, fetchMultiTenantTrajectoriesIndex } = require('./routingHelper');
 
 // Import models
 const Agency = require('../model/agencyModel');
@@ -659,7 +659,8 @@ async function populateProcessedRoutesFromFiles() {
 
     const PHASE2_ROUTE_TIMEOUT_ENABLED = (() => {
         const raw = process.env.PHASE2_ROUTE_TIMEOUT_ENABLED;
-        if (raw === undefined || raw === null) return false; // par défaut activé
+        // By default, enable per-route timeout unless explicitly set to "false"
+        if (raw === undefined || raw === null) return true;
         return String(raw).toLowerCase() !== 'false';
     })();
 
@@ -719,12 +720,10 @@ async function populateProcessedRoutesFromFiles() {
         let tGeOps = 0, tBuild = 0, tInsert = 0;
         let geometryCoords = [];
 
-        // First: re-try geOps in Phase 2 using live feeds (SBB, then multi-tenant) — optionally skipped
+        // First: re-try geOps in Phase 2 using live feeds with multiple waves (SBB prioritized), optionally skipped
         if (!PHASE2_SKIP_GEOPS) {
             try {
-                let retryCandidates = [];
-
-                // Skip geOps-retry if Phase 1 already had no candidates for this line name and TTL not expired
+                // Honor no-candidate TTL cache
                 const tNow = Date.now();
                 const ns = normalizeLineNameLocal(route.route_short_name);
                 const nl = normalizeLineNameLocal(route.route_long_name);
@@ -732,61 +731,76 @@ async function populateProcessedRoutesFromFiles() {
                 const tsNl = nl ? NO_CANDIDATE_CACHE.get(nl) : null;
                 const skipRetry = ((tsNs && (tNow - tsNs) < GEOPS_RETRY_TTL_MS) || (tsNl && (tNow - tsNl) < GEOPS_RETRY_TTL_MS));
 
-                const t0 = nowMs();
-                if (!skipRetry) {
+                if (skipRetry) {
+                    console.log(`⏭️  [Phase2 geOps-retry] Skipping geOps lookup for ${route.route_short_name || route.route_id} (cached no-candidate within TTL)`);
+                } else {
+                    // Compute remaining per-route time budget
+                    let remainingBudgetMs = Number.POSITIVE_INFINITY;
+                    if (PHASE2_ROUTE_TIMEOUT_ENABLED) {
+                        remainingBudgetMs = PHASE2_ROUTE_TIMEOUT_MS - (nowMs() - tStart);
+                    }
+
+                    // Allocate a portion of the remaining budget to candidate discovery + geOps geometry attempt
+                    const lookupBudget = Math.max(5000, Math.min(isFinite(remainingBudgetMs) ? Math.floor(remainingBudgetMs * 0.4) : 30000, 30000));
+                    const t0 = nowMs();
+
+                    // Wave-based candidate discovery (SBB each wave, then multi-tenant unless configured otherwise)
+                    let retryCandidates = [];
                     try {
-                        retryCandidates = await findTrainIdsByRouteNameLive(
-                            route.route_short_name,
-                            route.route_long_name,
-                            { bounds }
-                        );
-                        if (retryCandidates && retryCandidates.length) {
-                            const prev = retryCandidates.slice(0, 5).join(", ");
-                            console.log(`🔁 [Phase2 geOps-retry] [Live] candidates for ${route.route_short_name || route.route_id}: [${prev}] (${retryCandidates.length} total)`);
-                        } else {
-                            const multi = await findTrainIdsByRouteNameMultiTenant(
+                        const waveRes = await withTimeout(
+                            findTrainIdsByRouteNameWithWaves(
                                 route.route_short_name,
                                 route.route_long_name,
                                 { bounds }
-                            );
-                            if (multi && multi.length) {
-                                retryCandidates = multi;
-                                const prev = retryCandidates.slice(0, 5).join(", ");
-                                console.log(`🔁 [Phase2 geOps-retry] [Live Multi] candidates for ${route.route_short_name || route.route_id}: [${prev}] (${retryCandidates.length} total)`);
-                            } else {
-                                console.log(`ℹ️ [Phase2 geOps-retry] No live candidates for ${route.route_short_name || route.route_id}`);
-                            }
+                            ),
+                            lookupBudget
+                        );
+                        if (!waveRes.timedOut) {
+                            retryCandidates = waveRes.result || [];
+                        } else {
+                            console.log(`⏱️ [Phase2 geOps-retry] Candidate discovery timed out after ${msStr(lookupBudget)}`);
                         }
                     } catch (e) {
-                        console.warn(`⚠️ [Phase2 geOps-retry] Lookup failed for ${route.route_short_name || route.route_id}: ${e.message}`);
+                        console.warn(`⚠️ [Phase2 geOps-retry] Candidate discovery failed: ${e.message}`);
                     }
-                } else {
-                    console.log(`⏭️  [Phase2 geOps-retry] Skipping geOps lookup for ${route.route_short_name || route.route_id} (cached no-candidate within TTL)`);
-                }
 
-                if (retryCandidates && retryCandidates.length) {
-                    const res = await withTimeout(
-                        buildRouteGeometry(
-                            orderedStops,
-                            route.route_type,
-                            PHASE2_GEOM_PARALLELISM,
-                            retryCandidates,
-                            { geOpsOnly: true }
-                        ),
-                        Math.max(20000, Math.floor(PHASE2_ROUTE_TIMEOUT_MS / 2))
-                    );
-                    tGeOps += (nowMs() - t0);
-                    if (!res.timedOut) {
-                        const apiCoords = res.result;
-                        if (apiCoords && apiCoords.length > 1) {
-                            geometryCoords = apiCoords;
-                            console.log(`✅ [Phase2 geOps-retry] Using geOps geometry for ${route.route_short_name || route.route_id}`);
+                    // If we have candidates and still have some budget, attempt geOps-only geometry build
+                    if (retryCandidates && retryCandidates.length) {
+                        const prev = retryCandidates.slice(0, 5).join(", ");
+                        console.log(`🔁 [Phase2 geOps-retry] Candidates for ${route.route_short_name || route.route_id}: [${prev}] (${retryCandidates.length} total)`);
+
+                        // Recompute remaining budget after lookup
+                        if (PHASE2_ROUTE_TIMEOUT_ENABLED) {
+                            remainingBudgetMs = PHASE2_ROUTE_TIMEOUT_MS - (nowMs() - tStart);
+                        }
+                        const geOpsAttemptBudget = Math.max(20000, Math.min(isFinite(remainingBudgetMs) ? Math.floor(remainingBudgetMs * 0.5) : 20000, 45000));
+
+                        const res = await withTimeout(
+                            buildRouteGeometry(
+                                orderedStops,
+                                route.route_type,
+                                PHASE2_GEOM_PARALLELISM,
+                                retryCandidates,
+                                { geOpsOnly: true }
+                            ),
+                            geOpsAttemptBudget
+                        );
+                        tGeOps += (nowMs() - t0);
+                        if (!res.timedOut) {
+                            const apiCoords = res.result;
+                            if (apiCoords && apiCoords.length > 1) {
+                                geometryCoords = apiCoords;
+                                console.log(`✅ [Phase2 geOps-retry] Using geOps geometry for ${route.route_short_name || route.route_id}`);
+                            }
+                        } else {
+                            console.log(`⏱️ [Phase2 geOps-retry] GeOps attempt timed out for ${route.route_short_name || route.route_id} after ${msStr(geOpsAttemptBudget)}`);
                         }
                     } else {
-                        console.log(`⏱️ [Phase2 geOps-retry] Timed out for ${route.route_short_name || route.route_id} after ${msStr(Math.max(20000, Math.floor(PHASE2_ROUTE_TIMEOUT_MS / 2)))}`);
+                        tGeOps += (nowMs() - t0);
+                        if (!retryCandidates || !retryCandidates.length) {
+                            console.log(`ℹ️ [Phase2 geOps-retry] No live candidates for ${route.route_short_name || route.route_id}`);
+                        }
                     }
-                } else {
-                    tGeOps += (nowMs() - t0);
                 }
             } catch (e) {
                 console.warn(`⚠️ [Phase2 geOps-retry] Attempt error for ${route.route_id}: ${e.message}`);
