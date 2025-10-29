@@ -15,8 +15,9 @@ let lastRequestTime = 0;
 async function throttleRequest() {
     const now = Date.now();
     const elapsed = now - lastRequestTime;
-    if (elapsed < 1000) {
-        await new Promise(resolve => setTimeout(resolve, 10 - elapsed));
+    const waitMs = Math.max(0, 10 - elapsed);
+    if (waitMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, waitMs));
     }
     lastRequestTime = Date.now();
 }
@@ -196,6 +197,11 @@ async function buildRouteGeometry(orderedStops, routeType = 3, parallelism = 2, 
 
         const batchResults = await Promise.all(
             batchSlice.map(async (batch) => {
+                // Fast path: if all stops in the batch are outside Switzerland, skip SwissTNE and use OSRM
+                const allOutsideCH = batch.every(s => (s.stop_lon < 5.9 || s.stop_lon > 10.6 || s.stop_lat < 45.7 || s.stop_lat > 47.9));
+                if (allOutsideCH) {
+                    return fetchOSRMGeometry(batch, intRouteType);
+                }
                 try {
                     const coords = await buildGeometryFromSwissTNE(batch, intRouteType);
                     if (!coords || coords.length < 2)
@@ -597,6 +603,111 @@ async function findTrainIdsByRouteNameMultiTenant(routeShortName, routeLongName,
     return out;
 }
 
+// ---- Waves-based candidate discovery ----
+async function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
+
+async function findTrainIdsByRouteNameWithWaves(routeShortName, routeLongName, opts = {}) {
+    const waves = Math.max(1, parseInt(process.env.PHASE2_GEOPS_RETRY_WAVES || "3", 10));
+    const waveIntervalMs = Math.max(0, parseInt(process.env.PHASE2_GEOPS_WAVE_INTERVAL_MS || "15000", 10));
+    const sbbOnly = String(process.env.PHASE2_GEOPS_RETRY_SBB_ONLY || "false").toLowerCase() === "true";
+    const expandPerWaveKm = parseFloat(process.env.GEOPS_FEED_EXPAND_PER_WAVE_KM || "10");
+    const maxCandidates = parseInt(process.env.GEOPS_MAX_CANDIDATES || "5", 10) || 5;
+
+    const baseBounds = opts && opts.bounds ? opts.bounds : null;
+
+    const seen = new Set();
+    const out = [];
+
+    for (let w = 1; w <= waves; w++) {
+        const expandKm = Number.isFinite(expandPerWaveKm) ? expandPerWaveKm * (w - 1) : 0;
+        const b = baseBounds ? expandBounds(baseBounds, expandKm) : null;
+
+        let foundThisWave = 0;
+
+        // SBB first (trajectories/sbb)
+        try {
+            const sbbIndex = await fetchLiveTrajectoriesIndex({ bbox: b });
+            if (sbbIndex && sbbIndex.size) {
+                const keys = [];
+                if (routeShortName) keys.push(normalizeLineName(routeShortName));
+                if (routeLongName) keys.push(normalizeLineName(routeLongName));
+                const addVariant = (key, arr) => {
+                    const m = key.match(/^(\D+)(0*)(\d+)$/);
+                    if (m) arr.push((m[1] || "") + String(parseInt(m[3], 10)));
+                };
+                const searchKeys = [];
+                if (keys[0]) { searchKeys.push(keys[0]); addVariant(keys[0], searchKeys); }
+                if (keys[1]) { searchKeys.push(keys[1]); addVariant(keys[1], searchKeys); }
+                for (const k of searchKeys) {
+                    if (sbbIndex.has(k)) {
+                        for (const id of sbbIndex.get(k)) {
+                            if (!seen.has(id)) {
+                                seen.add(id);
+                                out.push(id);
+                                foundThisWave++;
+                                if (out.length >= maxCandidates) {
+                                    console.log(`🔎 [Wave ${w}] SBB candidates hit max (${out.length})`);
+                                    return out;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn(`⚠️ [Wave ${w}] SBB index fetch failed: ${e.message}`);
+        }
+
+        if (!sbbOnly && out.length < maxCandidates) {
+            try {
+                const merged = await fetchMultiTenantTrajectoriesIndex();
+                if (merged && merged.size) {
+                    const keys = [];
+                    if (routeShortName) keys.push(normalizeLineName(routeShortName));
+                    if (routeLongName) keys.push(normalizeLineName(routeLongName));
+                    const addVariant = (key, arr) => {
+                        const m = key.match(/^(\D+)(0*)(\d+)$/);
+                        if (m) arr.push((m[1] || "") + String(parseInt(m[3], 10)));
+                    };
+                    const searchKeys = [];
+                    if (keys[0]) { searchKeys.push(keys[0]); addVariant(keys[0], searchKeys); }
+                    if (keys[1]) { searchKeys.push(keys[1]); addVariant(keys[1], searchKeys); }
+                    for (const k of searchKeys) {
+                        if (merged.has(k)) {
+                            for (const id of merged.get(k)) {
+                                if (!seen.has(id)) {
+                                    seen.add(id);
+                                    out.push(id);
+                                    foundThisWave++;
+                                    if (out.length >= maxCandidates) {
+                                        console.log(`🔎 [Wave ${w}] Multi-tenant candidates hit max (${out.length})`);
+                                        return out;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn(`⚠️ [Wave ${w}] Multi-tenant index fetch failed: ${e.message}`);
+            }
+        }
+
+        if (foundThisWave > 0 || out.length > 0) {
+            console.log(`🛰️ [Waves] Found ${foundThisWave} new candidates on wave ${w} (total=${out.length})`);
+            return out;
+        }
+
+        if (w < waves && waveIntervalMs > 0) {
+            console.log(`⏳ [Waves] Waiting ${waveIntervalMs}ms before wave ${w + 1}...`);
+            await sleep(waveIntervalMs);
+        }
+    }
+
+    console.log("ℹ️ [Waves] No candidates after all waves");
+    return out;
+}
+
 module.exports = {
     buildRouteGeometry,
     mapRouteTypeToProfile,
@@ -606,6 +717,7 @@ module.exports = {
     fetchTenantTrajectoriesIndex,
     fetchMultiTenantTrajectoriesIndex,
     findTrainIdsByRouteNameMultiTenant,
+    findTrainIdsByRouteNameWithWaves,
     // export CRS helpers for defensive checks at insertion time
     toWGS84IfNeeded,
     isLikelyLonLat,

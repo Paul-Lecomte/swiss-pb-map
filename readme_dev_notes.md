@@ -80,3 +80,36 @@ This README explains the recent updates, design decisions, and technical impleme
 
 This document serves as a living reference for understanding the structure, updates, and reasoning behind the current SwissTransitMap implementation.
 
+
+
+
+### Phase 2 geOps multi-feed retry waves (2025-10-29)
+
+New environment variables and behavior to improve deferred route processing without straight lines:
+
+- PHASE2_GEOPS_RETRY_WAVES (default 3)
+  Number of retry waves to look up realtime geOps candidates. Each wave hits SBB first, then (optionally) neighbor feeds.
+
+- PHASE2_GEOPS_WAVE_INTERVAL_MS (default 15000)
+  Milliseconds to wait between waves. Increase if you see rate limits; decrease for faster discovery.
+
+- PHASE2_GEOPS_RETRY_SBB_ONLY (default false)
+  If true, only query the SBB realtime feed during waves. If false, also query multi-tenant (DB, SNCF, Trenitalia, ÖBB, or auto-picked).
+
+- GEOPS_FEED_EXPAND_PER_WAVE_KM (default 10)
+  Bounds expansion per wave when searching the live feed (applied to the GTFS-derived route bounds before indexing). Higher values broaden search.
+
+Existing relevant settings:
+- PHASE2_SKIP_GEOPS (default true)
+  When true, Phase 2 skips any geOps retries (useful for faster fallbacks or when offline).
+
+- GEOPS_MAX_CANDIDATES (default 5)
+  Max journey ids tested per route across waves. Keep small to avoid long attempts.
+
+- PHASE2_ROUTE_TIMEOUT_ENABLED (default true) and PHASE2_ROUTE_TIMEOUT_MS (default 120000)
+  A per-route watchdog. Phase 2 uses a time budget: a portion for live-candidate discovery and the rest for the geOps attempt; fallbacks run within the remaining time.
+
+Notes:
+- Wave discovery prioritizes SBB each time (realtime feed only lists currently running services). If a line was missing in an earlier wave, it may appear later.
+- Multi-tenant discovery merges neighbor feeds when enabled. Tenants are auto-selected from backend/data/feed_data.json if `GEOPS_EXTRA_TENANTS=auto`.
+- The SwissTNE→OSRM fallback chain remains unchanged. Batches fully outside Switzerland short-circuit to OSRM.
