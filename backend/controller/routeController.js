@@ -12,7 +12,8 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
         'bounds.min_lat': { $lte: maxLat },
         'bounds.max_lat': { $gte: minLat },
         'bounds.min_lon': { $lte: maxLng },
-        'bounds.max_lon': { $gte: minLng }
+        'bounds.max_lon': { $gte: minLng },
+        straight_line: false
     }).limit(150);
 
     res.json({
