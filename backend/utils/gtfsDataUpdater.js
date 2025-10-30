@@ -599,6 +599,7 @@ async function populateProcessedRoutesFromFiles() {
 
             const processedRoute = {
                 route_id: route.route_id,
+                straight_line: false,
                 agency_id: route.agency_id,
                 route_short_name: route.route_short_name,
                 route_long_name: route.route_long_name,
@@ -846,8 +847,12 @@ async function populateProcessedRoutesFromFiles() {
             console.log(`🌍 [Phase2] Converted geometry to WGS84 for ${route.route_short_name || route.route_id}`);
         }
 
+        // Mark if we fell back to straight-line (i.e., no routed geometry was obtained for this route)
+        const usedStraightLine = !(geometryCoords && geometryCoords.length);
+
         const processedRoute = {
             route_id: route.route_id,
+            straight_line: usedStraightLine,
             agency_id: route.agency_id,
             route_short_name: route.route_short_name,
             route_long_name: route.route_long_name,
