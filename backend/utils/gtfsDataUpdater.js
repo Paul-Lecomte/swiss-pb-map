@@ -528,6 +528,7 @@ async function populateProcessedRoutesFromFiles() {
         }
 
         try {
+            console.log("------------------------------------------------------------------------------------------------------------------------------------");
             console.log(`➡️  Computing geometry for route_type=${route.route_type} (${orderedStops.length} stops)...`);
 
             // 🟢 Try using geOps live trajectories feed to discover train_id by line name
