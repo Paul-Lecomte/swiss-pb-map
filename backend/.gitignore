@@ -32,3 +32,4 @@ data/stoptimes.json
 .env
 
 gtfs-realtime-data.bin
+journeys.json

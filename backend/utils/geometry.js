@@ -11,6 +11,7 @@ const WGS84 = '+proj=longlat +datum=WGS84 +no_defs';
 
 console.log('🚀 Starting journey fetch and conversion...');
 
+// ------------------ Fetch train IDs ------------------
 async function fetchTrainIds() {
     console.log('📡 Fetching train IDs...');
     const url = `https://api.geops.io/tracker-http/v1/trajectories/sbb/?key=${process.env.GEOPS_API_KEY}`;
@@ -21,7 +22,7 @@ async function fetchTrainIds() {
 
         const trainIds = features
             .map(f => f?.properties?.train_id)
-            .filter(Boolean); // remove undefined/null
+            .filter(Boolean);
 
         const uniqueIds = [...new Set(trainIds)];
         console.log(`✅ Found ${uniqueIds.length} unique train IDs.`);
@@ -32,6 +33,7 @@ async function fetchTrainIds() {
     }
 }
 
+// ------------------ Fetch single journey ------------------
 async function fetchJourney(train_id) {
     const url = `https://api.geops.io/tracker-http/v1/journeys/${train_id}/?key=${process.env.GEOPS_API_KEY}`;
     try {
@@ -59,25 +61,92 @@ async function fetchJourney(train_id) {
     }
 }
 
+// ------------------ Save journeys ------------------
 async function main() {
     console.time('⏱️ Total duration');
 
     const trainIds = await fetchTrainIds();
     const results = [];
+    const savedLineNames = new Set(); // Track unique line_name
 
     for (const [index, train_id] of trainIds.entries()) {
         console.log(`➡️ [${index + 1}/${trainIds.length}] Processing train_id: ${train_id}`);
         const journeyData = await fetchJourney(train_id);
         if (journeyData) {
-            results.push(journeyData);
+            const lineName = journeyData.features?.[0]?.properties?.line_name;
+            if (!lineName) continue;
+
+            // Normalize line_name
+            const normalizedLine = lineName.toUpperCase().replace(/\s+/g, '').replace(/[.-]/g, '');
+
+            if (!savedLineNames.has(normalizedLine)) {
+                results.push(journeyData);
+                savedLineNames.add(normalizedLine);
+            } else {
+                console.log(`⚠️ Skipping duplicate line_name: ${lineName}`);
+            }
         }
     }
 
     fs.writeFileSync('journeys.json', JSON.stringify(results, null, 2));
-
-    console.log(`💾 Saved ${results.length} journeys to journeys.json`);
+    console.log(`💾 Saved ${results.length} unique journeys to journeys.json`);
     console.timeEnd('⏱️ Total duration');
     console.log('✅ Done!');
 }
 
 main();
+
+// ------------------ Geometry Loader ------------------
+export const localGeometries = new Map();
+export const journeyFile = 'journeys.json';
+
+export function loadLocalJourneyGeometries() {
+    try {
+        console.log("🔍 Checking for journey file:", journeyFile);
+
+        if (!fs.existsSync(journeyFile)) {
+            console.warn("⚠️ Journey file not found:", journeyFile);
+            return;
+        }
+
+        const raw = fs.readFileSync(journeyFile, "utf8");
+        const dataArray = JSON.parse(raw);
+
+        localGeometries.clear();
+
+        for (const data of dataArray) {
+            const lineName = data?.features?.[0]?.properties?.line_name;
+            if (!lineName) continue;
+
+            const normalizedLine = lineName.toUpperCase().replace(/\s+/g, '').replace(/[.-]/g, '');
+            if (localGeometries.has(normalizedLine)) continue; // skip duplicates
+
+            const coords = [];
+            for (const f of data.features || []) {
+                const geom = f.geometry;
+                if (geom?.type === "GeometryCollection") {
+                    for (const g of geom.geometries || []) {
+                        if (g.type === "LineString" && Array.isArray(g.coordinates)) {
+                            coords.push(...g.coordinates);
+                        }
+                    }
+                }
+            }
+
+            if (coords.length > 1) localGeometries.set(normalizedLine, coords);
+        }
+
+        console.log(`✅ Loaded ${localGeometries.size} local route geometries.`);
+    } catch (err) {
+        console.error("❌ Failed to load journey.json:", err);
+    }
+}
+
+// ------------------ Geometry fetcher by line_name ------------------
+export function fetchLocalGeometryByLineName(lineName) {
+    if (!lineName) return null;
+    const normalizedLine = lineName.toUpperCase().replace(/\s+/g, '').replace(/[.-]/g, '');
+    const geom = localGeometries.get(normalizedLine);
+    if (geom && geom.length > 1) return geom;
+    return null;
+}
