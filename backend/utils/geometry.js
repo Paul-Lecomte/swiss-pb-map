@@ -11,23 +11,27 @@ const WGS84 = '+proj=longlat +datum=WGS84 +no_defs';
 
 console.log('🚀 Starting journey fetch and conversion...');
 
-// Step 1: Fetch all train_ids from features
 async function fetchTrainIds() {
     console.log('📡 Fetching train IDs...');
     const url = `https://api.geops.io/tracker-http/v1/trajectories/sbb/?key=${process.env.GEOPS_API_KEY}`;
-    const response = await axios.get(url);
 
-    const features = response.data.features || [];
-    const trainIds = features
-        .map(f => f?.properties?.train_id)
-        .filter(Boolean); // remove undefined/null
+    try {
+        const response = await axios.get(url);
+        const features = response.data.features || [];
 
-    const uniqueIds = [...new Set(trainIds)];
-    console.log(`✅ Found ${uniqueIds.length} unique train IDs.`);
-    return uniqueIds;
+        const trainIds = features
+            .map(f => f?.properties?.train_id)
+            .filter(Boolean); // remove undefined/null
+
+        const uniqueIds = [...new Set(trainIds)];
+        console.log(`✅ Found ${uniqueIds.length} unique train IDs.`);
+        return uniqueIds;
+    } catch (err) {
+        console.error('❌ Failed to fetch train IDs:', err.response?.status || err.message);
+        return [];
+    }
 }
 
-// Step 2: Fetch each journey and convert coordinates
 async function fetchJourney(train_id) {
     const url = `https://api.geops.io/tracker-http/v1/journeys/${train_id}/?key=${process.env.GEOPS_API_KEY}`;
     try {
@@ -35,12 +39,14 @@ async function fetchJourney(train_id) {
         const response = await axios.get(url);
         const journey = response.data;
 
-        // Convert LV95 -> WGS84 coordinates
+        // Convert LV95 → WGS84 coordinates
         journey.features.forEach(feature => {
             if (feature.geometry?.geometries) {
                 feature.geometry.geometries.forEach(geom => {
                     if (Array.isArray(geom.coordinates)) {
-                        geom.coordinates = geom.coordinates.map(coord => proj4(LV95, WGS84, coord));
+                        geom.coordinates = geom.coordinates.map(coord =>
+                            proj4(LV95, WGS84, coord)
+                        );
                     }
                 });
             }
@@ -53,12 +59,14 @@ async function fetchJourney(train_id) {
     }
 }
 
-// Step 3: Main execution
 async function main() {
+    console.time('⏱️ Total duration');
+
     const trainIds = await fetchTrainIds();
     const results = [];
 
-    for (const train_id of trainIds) {
+    for (const [index, train_id] of trainIds.entries()) {
+        console.log(`➡️ [${index + 1}/${trainIds.length}] Processing train_id: ${train_id}`);
         const journeyData = await fetchJourney(train_id);
         if (journeyData) {
             results.push(journeyData);
@@ -66,7 +74,10 @@ async function main() {
     }
 
     fs.writeFileSync('journeys.json', JSON.stringify(results, null, 2));
-    console.log('💾 Saved all journeys to journeys.json');
+
+    console.log(`💾 Saved ${results.length} journeys to journeys.json`);
+    console.timeEnd('⏱️ Total duration');
+    console.log('✅ Done!');
 }
 
 main();
