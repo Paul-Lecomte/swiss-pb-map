@@ -13,6 +13,9 @@
  * 4. Update ProcessedRoute (optimized pipeline, does not touch base collections):
  *    node backend/utils/gtfsDataUpdater.js --processedroutes
  *
+ * 5. Update only base GTFS collections (skip ProcessedStops and ProcessedRoute):
+ *    node backend/utils/gtfsDataUpdater.js --base
+ *
  * Run these commands in the terminal at the project root.
  */
 
@@ -736,6 +739,34 @@ const args = process.argv.slice(2);
 
 async function main() {
     await connectDB();
+
+    if (args.includes('--base')) {
+        console.log('Updating only base GTFS collections (excluding ProcessedStops/ProcessedRoute)...');
+        await downloadGTFS();
+        await extractGTFS();
+
+        const baseFiles = [
+            { file: 'agency.txt', model: Agency, name: 'Agency' },
+            { file: 'calendar.txt', model: Calendar, name: 'Calendar' },
+            { file: 'calendar_dates.txt', model: CalendarDate, name: 'Calendar Date' },
+            { file: 'feed_info.txt', model: FeedInfo, name: 'Feed Info' },
+            { file: 'routes.txt', model: Route, name: 'Route' },
+            { file: 'stop_times.txt', model: StopTime, name: 'Stop Time' },
+            { file: 'stops.txt', model: Stop, name: 'Stop' },
+            { file: 'transfers.txt', model: Transfer, name: 'Transfer' },
+            { file: 'trips.txt', model: Trip, name: 'Trip' }
+        ];
+
+        for (const { file, model, name } of baseFiles) {
+            try {
+                await parseCSV(file, model, name);
+            } catch (err) {
+                console.error(`Error updating ${name}:`, err.message);
+            }
+        }
+
+        console.log('✅ Base GTFS collections updated (ProcessedStops/ProcessedRoute skipped)');
+    }
 
     if (args.includes('--stops')) {
         await downloadGTFS();
