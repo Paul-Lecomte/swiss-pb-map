@@ -1,3 +1,5 @@
+// gtfsdataupdater.js
+
 /**
  * Commands to update GTFS collections:
  *
@@ -27,7 +29,7 @@ const stream = require('stream');
 const cheerio = require('cheerio');
 const mongoose = require('mongoose');
 const connectDB = require('../config/dbConnection');
-const { buildRouteGeometry, mapRouteTypeToProfile } = require('./routingHelper');
+const { buildRouteGeometry } = require('./routingHelper');
 const csv = require('csv-parser');
 
 // Import models
@@ -44,9 +46,26 @@ const ProcessedStop = require('../model/processedStopsModel');
 const ProcessedRoute = require('../model/processedRoutesModel');
 
 const pipeline = promisify(stream.pipeline);
-const DATA_DIR = path.join(__dirname, 'gtfs_data');
+const DATA_DIR = path.join(__dirname, '../backend/data/gtfs_data');
 const ZIP_FILE_PATH = path.join(DATA_DIR, 'gtfs.zip');
 const GTFS_BASE_URL = 'https://data.opentransportdata.swiss/en/dataset/timetable-2025-gtfs2020';
+// Optional static GTFS directory (if present, used for processed routes instead of download)
+const STATIC_GTFS_DIR = path.join(__dirname, '../data/gtfs');
+
+function copyDirectoryRecursiveSync(src, dest) {
+    if (!fs.existsSync(src)) return;
+    if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
+    const entries = fs.readdirSync(src, { withFileTypes: true });
+    for (const entry of entries) {
+        const srcPath = path.join(src, entry.name);
+        const destPath = path.join(dest, entry.name);
+        if (entry.isDirectory()) {
+            copyDirectoryRecursiveSync(srcPath, destPath);
+        } else if (entry.isFile()) {
+            fs.copyFileSync(srcPath, destPath);
+        }
+    }
+}
 
 // Ensure the data directory exists
 if (fs.existsSync(DATA_DIR)) {
@@ -162,25 +181,28 @@ async function getRouteColor(routeShortName) {
 // -------------------------
 
 async function loadShapesMap() {
-    const shapesFile = path.join(__dirname, '../data/shapes.txt');
+    const shapesFile = path.join(__dirname, '../data/gtfs/shapes.txt');
 
     if (!fs.existsSync(shapesFile)) {
-        console.warn('⚠️ shapes.txt not found in /backend/data, skipping shape-based geometries.');
+        console.log("the path is:", shapesFile);
+        console.warn('⚠️ shapes.txt not found in backend/data/gtfs, skipping shape-based geometries.');
         return new Map();
     }
 
-    console.log('Loading shapes.txt from backend/data...');
+    console.log('Loading shapes.txt from backend/data/gtfs...');
     const shapesMap = new Map();
 
     return new Promise((resolve, reject) => {
         fs.createReadStream(shapesFile)
             .pipe(csv())
             .on('data', row => {
-                const id = row.shape_id;
+                let id = row.shape_id?.trim();
+                if (!id) return;
+                id = id.replace(/[\r\n]/g, '');
                 const lat = parseFloat(row.shape_pt_lat);
                 const lon = parseFloat(row.shape_pt_lon);
                 const seq = parseInt(row.shape_pt_sequence, 10);
-                if (!id || isNaN(lat) || isNaN(lon)) return;
+                if (isNaN(lat) || isNaN(lon)) return;
                 if (!shapesMap.has(id)) shapesMap.set(id, []);
                 shapesMap.get(id).push({ seq, coord: [lon, lat] });
             })
@@ -195,6 +217,7 @@ async function loadShapesMap() {
             .on('error', reject);
     });
 }
+
 
 
 // -------------------------
@@ -487,11 +510,47 @@ async function processStopBatch(stopsBatch, tripMap, routeMap, batchNumber) {
     await ProcessedStop.insertMany(processedStops, { ordered: false });
 }
 
+
+// -------------------------
+// Load mapping of trip_id → shape_id from trips.txt
+// Normalizes shape_id (trim, remove CR/LF, consistent casing)
+// -------------------------
+async function loadTripShapeMap() {
+    const filePath = path.join(DATA_DIR, 'trips.txt');
+    if (!fs.existsSync(filePath)) return new Map();
+
+    console.log('Building trip → shape_id map (streaming trips.txt)...');
+    return new Promise((resolve, reject) => {
+        const map = new Map();
+        const parser = parse({
+            columns: header => header.map(col => col.trim().toLowerCase()),
+            relax_column_count: true,
+            skip_empty_lines: true,
+        });
+
+        const rs = fs.createReadStream(filePath);
+        rs.pipe(parser);
+
+        parser.on('data', row => {
+            const tripId = row.trip_id?.trim();
+            let shapeId = row.shape_id?.trim();
+            if (shapeId) shapeId = shapeId.replace(/[\r\n]/g, '');
+            if (tripId && shapeId) map.set(tripId, shapeId);
+        });
+
+        parser.on('end', () => {
+            console.log(`✅ Trip→Shape map built for ${map.size} trips`);
+            resolve(map);
+        });
+
+        parser.on('error', reject);
+    });
+}
+
+
 // -------------------------
 // File-based ProcessedRoutes (memory efficient)
 // -------------------------
-
-//TODO : Fix current problem with the swisstne data not giving out accurate results for some routes
 
 async function populateProcessedRoutesFromFiles() {
     console.log('Starting file-based population of ProcessedRoute (memory-efficient)...');
@@ -503,8 +562,11 @@ async function populateProcessedRoutesFromFiles() {
     const mainTripForRoute = await findMainTripsForRoutes('trips.txt', counts);
     const mainTripIds = new Set(mainTripForRoute.values());
 
-    // ✅ Load shapes.txt for GTFS geometries
-    const shapesMap = await loadShapesMap();
+    // Load shapes.txt and trip→shape_id mapping
+    const [shapesMap, tripShapeMap] = await Promise.all([
+        loadShapesMap(),
+        loadTripShapeMap()
+    ]);
 
     const stopTimesMap = await collectStopTimesForTripIds('stop_times.txt', mainTripIds);
     const stopMap = await buildStopMap('stops.txt');
@@ -522,6 +584,7 @@ async function populateProcessedRoutesFromFiles() {
         const mainTripId = mainTripForRoute.get(route.route_id);
         let orderedStops = [];
 
+        // Collect ordered stops for mainTripId
         if (mainTripId) {
             const stList = stopTimesMap.get(mainTripId) || [];
             stList.sort((a, b) => parseInt(a.stop_sequence || '0') - parseInt(b.stop_sequence || '0'));
@@ -535,7 +598,6 @@ async function populateProcessedRoutesFromFiles() {
                         stop_lat: parseFloat(stop.stop_lat),
                         stop_lon: parseFloat(stop.stop_lon),
                         stop_sequence: parseInt(st.stop_sequence || '0'),
-                        shape_id: st.shape_id || null
                     };
                 })
                 .filter(Boolean);
@@ -553,33 +615,27 @@ async function populateProcessedRoutesFromFiles() {
             : null;
 
         let geometryCoords = [];
+
         if (orderedStops.length >= 2) {
             try {
-                const trainIdCandidate = mainTripId || route.route_id;
+                // Fetch the shape_id for the main trip and clean it
+                let shapeId = mainTripId ? tripShapeMap.get(mainTripId) : null;
+                if (shapeId) shapeId = shapeId.trim().replace(/[\r\n]/g, '');
 
-                // 🟢 Try shapes.txt first
-                let shapeId = null;
-                const mainTripStopTimes = stopTimesMap.get(mainTripId);
-                if (mainTripStopTimes && mainTripStopTimes.length) {
-                    // Try to infer shape_id from the first stop_time row
-                    if (mainTripStopTimes[0].shape_id) {
-                        shapeId = mainTripStopTimes[0].shape_id;
-                    }
-                }
-
+                // Use shapes.txt geometry if available
                 if (shapeId && shapesMap.has(shapeId)) {
                     geometryCoords = shapesMap.get(shapeId);
-                    console.log(`✅ Using GTFS shapes.txt geometry for route ${route.route_id} (shape_id=${shapeId})`);
+                    console.log(`✅ Using shapes.txt geometry for route ${route.route_id} (shape_id=${shapeId})`);
                 } else {
+                    // Fallback: build geometry from stops (only if shapes missing)
                     console.log(`⚙️ Falling back to SwissTNE/OSRM for route ${route.route_id}`);
                     geometryCoords = await buildRouteGeometry(
                         orderedStops,
                         route.route_type,
                         2,
-                        trainIdCandidate
+                        mainTripId || route.route_id
                     );
                 }
-
             } catch (err) {
                 console.error(`❌ Failed to build geometry for route ${route.route_id}:`, err.message);
             }
@@ -704,8 +760,19 @@ async function main() {
 
     if (args.includes('--processedroutes')) {
         // file-based, memory-efficient pipeline that does NOT write stops/trips/stop_times/routes to DB
-        await downloadGTFS();
-        await extractGTFS();
+        // Prefer static GTFS folder if present to avoid network download
+        if (fs.existsSync(STATIC_GTFS_DIR)) {
+            console.log('Using static GTFS data from', STATIC_GTFS_DIR);
+            // ensure DATA_DIR is clean
+            if (fs.existsSync(DATA_DIR)) fs.rmSync(DATA_DIR, { recursive: true, force: true });
+            fs.mkdirSync(DATA_DIR, { recursive: true });
+            copyDirectoryRecursiveSync(STATIC_GTFS_DIR, DATA_DIR);
+        } else {
+            // fallback to downloading latest GTFS
+            await downloadGTFS();
+            await extractGTFS();
+        }
+
         await populateProcessedRoutesFromFiles();
     }
 
