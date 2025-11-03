@@ -6,16 +6,22 @@ const { buildGeometryFromSwissTNE } = require("./swisstneHelper");
  */
 function mapRouteTypeToProfile(routeType) {
     switch (parseInt(routeType, 10)) {
-        case 2: return "train";
-        case 4: return "ferry";
-        case 5: case 6: case 7: case 1400: return "cycling";
-        default: return "driving";
+        case 2:
+            return "train";
+        case 4:
+            return "ferry";
+        case 5:
+        case 6:
+        case 7:
+        case 1400:
+            return "cycling";
+        default:
+            return "driving";
     }
 }
 
 /**
  * Split stops into overlapping batches of size n.
- * Overlap ensures consecutive segments connect properly.
  */
 function batchStops(orderedStops, batchSize = 60) {
     const batches = [];
@@ -28,7 +34,7 @@ function batchStops(orderedStops, batchSize = 60) {
 }
 
 /**
- * Query OSRM for coordinates of a stop batch
+ * Query OSRM for route geometry
  */
 async function fetchOSRMGeometry(batch, routeType) {
     if (batch.length < 2) return batch.map(s => [s.stop_lon, s.stop_lat]);
@@ -46,20 +52,19 @@ async function fetchOSRMGeometry(batch, routeType) {
         console.warn("OSRM fallback failed:", err.message);
     }
 
-    // Last-resort: straight lines
     return batch.map(s => [s.stop_lon, s.stop_lat]);
 }
 
 /**
- * Build route geometry using SwissTNE first, then fallback to OSRM/straight lines.
- * Handles long routes by batching stops to avoid huge arrays.
- * Uses spatial index from swisstneHelper for speed/memory.
+ * Build route geometry:
+ *  1️⃣ Try SwissTNE data
+ *  2️⃣ Fallback to OSRM
+ *  3️⃣ Fallback to straight lines
  */
 async function buildRouteGeometry(orderedStops, routeType = 3, parallelism = 2) {
     if (!orderedStops || orderedStops.length < 2) return [];
 
-    // Allow overriding parallelism via env var
-    const envPar = parseInt(process.env.ROUTE_GEOM_PARALLELISM || '', 10);
+    const envPar = parseInt(process.env.ROUTE_GEOM_PARALLELISM || "", 10);
     if (!parallelism || Number.isNaN(parallelism)) {
         parallelism = Number.isInteger(envPar) && envPar > 0 ? envPar : 4;
     }
@@ -68,7 +73,6 @@ async function buildRouteGeometry(orderedStops, routeType = 3, parallelism = 2) 
     const mergedCoords = [];
     const batches = batchStops(orderedStops, 50);
 
-    // Process batches in parallel chunks
     for (let i = 0; i < batches.length; i += parallelism) {
         const batchSlice = batches.slice(i, i + parallelism);
 
@@ -79,13 +83,12 @@ async function buildRouteGeometry(orderedStops, routeType = 3, parallelism = 2) 
                     if (!coords || coords.length < 2) throw new Error("SwissTNE returned too few coordinates");
                     return coords;
                 } catch {
-                    // Fallback to OSRM or straight lines
                     return fetchOSRMGeometry(batch, intRouteType);
                 }
             })
         );
 
-        // Merge results, skipping duplicates
+        // Merge results, skipping duplicate coordinates
         for (const coords of batchResults) {
             for (const coord of coords) {
                 const last = mergedCoords[mergedCoords.length - 1];

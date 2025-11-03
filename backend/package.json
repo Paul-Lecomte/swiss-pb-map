@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",
-    "update-gtfs": "node --max-old-space-size=32768 utils/gtfsDataUpdater.js --processedroutes"
+    "update-routes": "node --max-old-space-size=32768 utils/gtfsDataUpdater.js --processedroutes"
   },
   "author": "Lecomte Paul",
   "license": "MIT",
@@ -18,6 +18,7 @@
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "csv-parse": "^5.6.0",
+    "csv-parser": "^3.2.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "express-async-handler": "^1.2.0",

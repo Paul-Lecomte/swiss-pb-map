@@ -28,6 +28,7 @@ const cheerio = require('cheerio');
 const mongoose = require('mongoose');
 const connectDB = require('../config/dbConnection');
 const { buildRouteGeometry, mapRouteTypeToProfile } = require('./routingHelper');
+const csv = require('csv-parser');
 
 // Import models
 const Agency = require('../model/agencyModel');
@@ -155,6 +156,46 @@ async function getRouteColor(routeShortName) {
     // Default unknown
     return '#777';
 }
+
+// -------------------------
+// Shapes loader (for GTFS geometries)
+// -------------------------
+
+async function loadShapesMap() {
+    const shapesFile = path.join(__dirname, '../data/shapes.txt');
+
+    if (!fs.existsSync(shapesFile)) {
+        console.warn('⚠️ shapes.txt not found in /backend/data, skipping shape-based geometries.');
+        return new Map();
+    }
+
+    console.log('Loading shapes.txt from backend/data...');
+    const shapesMap = new Map();
+
+    return new Promise((resolve, reject) => {
+        fs.createReadStream(shapesFile)
+            .pipe(csv())
+            .on('data', row => {
+                const id = row.shape_id;
+                const lat = parseFloat(row.shape_pt_lat);
+                const lon = parseFloat(row.shape_pt_lon);
+                const seq = parseInt(row.shape_pt_sequence, 10);
+                if (!id || isNaN(lat) || isNaN(lon)) return;
+                if (!shapesMap.has(id)) shapesMap.set(id, []);
+                shapesMap.get(id).push({ seq, coord: [lon, lat] });
+            })
+            .on('end', () => {
+                for (const [id, points] of shapesMap.entries()) {
+                    points.sort((a, b) => a.seq - b.seq);
+                    shapesMap.set(id, points.map(p => p.coord));
+                }
+                console.log(`✅ Loaded ${shapesMap.size} shapes from shapes.txt`);
+                resolve(shapesMap);
+            })
+            .on('error', reject);
+    });
+}
+
 
 // -------------------------
 // Generic CSV parse (DB mode and small-return mode)
@@ -462,6 +503,9 @@ async function populateProcessedRoutesFromFiles() {
     const mainTripForRoute = await findMainTripsForRoutes('trips.txt', counts);
     const mainTripIds = new Set(mainTripForRoute.values());
 
+    // ✅ Load shapes.txt for GTFS geometries
+    const shapesMap = await loadShapesMap();
+
     const stopTimesMap = await collectStopTimesForTripIds('stop_times.txt', mainTripIds);
     const stopMap = await buildStopMap('stops.txt');
 
@@ -481,7 +525,6 @@ async function populateProcessedRoutesFromFiles() {
         if (mainTripId) {
             const stList = stopTimesMap.get(mainTripId) || [];
             stList.sort((a, b) => parseInt(a.stop_sequence || '0') - parseInt(b.stop_sequence || '0'));
-
             orderedStops = stList
                 .map(st => {
                     const stop = stopMap.get(st.stop_id);
@@ -491,7 +534,8 @@ async function populateProcessedRoutesFromFiles() {
                         stop_name: stop.stop_name,
                         stop_lat: parseFloat(stop.stop_lat),
                         stop_lon: parseFloat(stop.stop_lon),
-                        stop_sequence: parseInt(st.stop_sequence || '0')
+                        stop_sequence: parseInt(st.stop_sequence || '0'),
+                        shape_id: st.shape_id || null
                     };
                 })
                 .filter(Boolean);
@@ -511,19 +555,30 @@ async function populateProcessedRoutesFromFiles() {
         let geometryCoords = [];
         if (orderedStops.length >= 2) {
             try {
-                console.log(`➡️  Computing geometry for route_type=${route.route_type} (${orderedStops.length} stops)...`);
-
-                // 🟢 Try using the new Swiss trajectory API first (if train_id available)
-                // We’ll assume the GTFS trip_id or route_id can serve as the `train_id`
-                // (you can adjust this mapping depending on your GTFS data)
                 const trainIdCandidate = mainTripId || route.route_id;
 
-                geometryCoords = await buildRouteGeometry(
-                    orderedStops,
-                    route.route_type,
-                    2,
-                    trainIdCandidate
-                );
+                // 🟢 Try shapes.txt first
+                let shapeId = null;
+                const mainTripStopTimes = stopTimesMap.get(mainTripId);
+                if (mainTripStopTimes && mainTripStopTimes.length) {
+                    // Try to infer shape_id from the first stop_time row
+                    if (mainTripStopTimes[0].shape_id) {
+                        shapeId = mainTripStopTimes[0].shape_id;
+                    }
+                }
+
+                if (shapeId && shapesMap.has(shapeId)) {
+                    geometryCoords = shapesMap.get(shapeId);
+                    console.log(`✅ Using GTFS shapes.txt geometry for route ${route.route_id} (shape_id=${shapeId})`);
+                } else {
+                    console.log(`⚙️ Falling back to SwissTNE/OSRM for route ${route.route_id}`);
+                    geometryCoords = await buildRouteGeometry(
+                        orderedStops,
+                        route.route_type,
+                        2,
+                        trainIdCandidate
+                    );
+                }
 
             } catch (err) {
                 console.error(`❌ Failed to build geometry for route ${route.route_id}:`, err.message);
