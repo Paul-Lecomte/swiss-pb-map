@@ -1,5 +1,3 @@
-// gtfsdataupdater.js
-
 /**
  * Commands to update GTFS collections:
  *

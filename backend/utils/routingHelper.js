@@ -1,4 +1,3 @@
-// routingHelper.js
 const axios = require("axios");
 const { buildGeometryFromSwissTNE } = require("./swisstneHelper");
 
