@@ -653,6 +653,7 @@ async function populateProcessedRoutesFromFiles() {
             route_text_color: route.route_text_color,
             stops: orderedStops,
             bounds,
+            straight_line: geometryCoords.length < 1,
             geometry: {
                 type: "LineString",
                 coordinates: geometryCoords.length
