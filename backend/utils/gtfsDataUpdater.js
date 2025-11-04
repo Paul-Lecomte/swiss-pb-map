@@ -644,6 +644,7 @@ async function populateProcessedRoutesFromFiles() {
 
         const processedRoute = {
             route_id: route.route_id,
+            trip_id: mainTripId,
             agency_id: route.agency_id,
             route_short_name: route.route_short_name,
             route_long_name: route.route_long_name,
