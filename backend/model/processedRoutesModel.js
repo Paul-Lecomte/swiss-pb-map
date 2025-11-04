@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 
 const processedRouteSchema = new mongoose.Schema({
     route_id: { type: String, required: true, unique: true },
+    trip_id: String,
     straight_line: Boolean,
     agency_id: String,
     route_short_name: String,
