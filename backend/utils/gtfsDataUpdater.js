@@ -286,10 +286,6 @@ async function parseCSV(fileName, model, name, { saveToDB = true } = {}) {
 // Memory-efficient helpers for stop_times (streaming passes)
 // -------------------------
 
-/**
- * First pass: count stop_time rows per trip_id.
- * Returns a Map<trip_id, count>
- */
 async function countStopTimesPerTrip(fileName) {
     const filePath = path.join(DATA_DIR, fileName);
     if (!fs.existsSync(filePath)) return new Map();
@@ -722,8 +718,6 @@ async function updateGTFSData() {
         }
 
         await populateProcessedStops();
-        // keep DB-based processed routes if you want to preserve the old behavior:
-        // await populateProcessedRoutes(); // (this will use DB collections)
         fs.rmSync(DATA_DIR, { recursive: true, force: true });
 
         console.log('GTFS data update completed.');
