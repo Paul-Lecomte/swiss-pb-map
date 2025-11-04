@@ -1,3 +1,4 @@
+// TODO : preprocess the stop_times with the trip_id for faster loading current load is an average of 9000ms
 const asyncHandler = require('express-async-handler');
 const ProcessedRoute = require('../model/processedRoutesModel');
 const StopTime = require('../model/stopTimesModel');
@@ -8,41 +9,47 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
 
     const [minLng, minLat, maxLng, maxLat] = bbox.split(',').map(Number);
 
-    // 1️⃣ Fetch matching routes
+    //  Fetch matching routes (lean + limit)
     const routes = await ProcessedRoute.find({
         'bounds.min_lat': { $lte: maxLat },
         'bounds.max_lat': { $gte: minLat },
         'bounds.min_lon': { $lte: maxLng },
         'bounds.max_lon': { $gte: minLng },
         straight_line: false
-    }).limit(150);
+    })
+        .limit(150)
+        .lean(); // returns plain JS objects
 
     if (!routes.length) return res.json({ type: "FeatureCollection", features: [] });
 
-    // 2️⃣ Collect all trip_ids
+    //  Collect all trip_ids
     const tripIds = routes.map(r => r.trip_id).filter(Boolean);
+    if (!tripIds.length) return res.json({ type: "FeatureCollection", features: [] });
 
-    // 3️⃣ Fetch all stop_times for all trip_ids at once
-    const allStopTimes = await StopTime.find({ trip_id: { $in: tripIds } }).sort({ stop_sequence: 1 });
+    //  Fetch all stop_times for these trip_ids (lean + select only needed fields)
+    const allStopTimes = await StopTime.find(
+        { trip_id: { $in: tripIds } },
+        { trip_id: 1, stop_id: 1, arrival_time: 1, departure_time: 1, stop_sequence: 1 }
+    ).sort({ stop_sequence: 1 }).lean();
 
-    // 4️⃣ Map stop_times by trip_id then stop_id
-    const stopTimesMap = new Map(); // trip_id -> Map(stop_id -> stop_time)
+    //  Map stop_times by trip_id -> stop_id for fast access
+    const stopTimesMap = {}; // { [trip_id]: { [stop_id]: stopTime } }
     allStopTimes.forEach(st => {
-        if (!stopTimesMap.has(st.trip_id)) stopTimesMap.set(st.trip_id, new Map());
-        stopTimesMap.get(st.trip_id).set(st.stop_id, {
+        if (!stopTimesMap[st.trip_id]) stopTimesMap[st.trip_id] = {};
+        stopTimesMap[st.trip_id][st.stop_id] = {
             arrival_time: st.arrival_time,
             departure_time: st.departure_time,
             stop_sequence: st.stop_sequence
-        });
+        };
     });
 
-    // 5️⃣ Attach stop_times to stops in routes
+    //  Attach stop_times to stops in each route
     const features = routes.map(route => {
-        const tripStopTimes = stopTimesMap.get(route.trip_id) || new Map();
+        const tripStopTimes = stopTimesMap[route.trip_id] || {};
 
         const stopsWithTimes = route.stops.map(stop => ({
-            ...stop.toObject ? stop.toObject() : stop,
-            stop_times: tripStopTimes.get(stop.stop_id) ? [tripStopTimes.get(stop.stop_id)] : []
+            ...stop,
+            stop_times: tripStopTimes[stop.stop_id] ? [tripStopTimes[stop.stop_id]] : []
         }));
 
         return {
