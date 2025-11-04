@@ -1,10 +1,15 @@
-import React from "react";
+import React, { useEffect } from "react";
+
+interface StopTime {
+    arrival_time?: string;
+    departure_time?: string;
+    delay?: number;
+}
 
 interface Stop {
     stop_id: string;
     stop_name: string;
-    arrival_time?: string;
-    delay?: number;
+    stop_times?: StopTime[];
 }
 
 interface Route {
@@ -22,17 +27,37 @@ interface RouteInfoPanelProps {
 }
 
 const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose }) => {
+    useEffect(() => {
+        if (route) {
+            console.log("[RouteInfoPanel] route data:", route);
+            console.log("[RouteInfoPanel] stops:", route.properties.stops);
+        }
+    }, [route]);
+
     if (!route) return null;
 
     const stops = route.properties.stops || [];
 
-    const getDelayClass = (delay: number) => {
-        if (delay > 60) return "text-red-600";
-        if (delay < -60) return "text-blue-600";
-        return "text-green-700";
+    const delayColors = {
+        late2: "text-red-600",    // > 2 min late
+        late1: "text-orange-500", // > 1 min late
+        onTime: "text-green-700", // ±1 min
+        early2: "text-blue-600",  // > 2 min early
+        early1: "text-cyan-500",  // > 1 min early
+        missing: "text-grey-400", // undefined/null
     };
 
-    const formatDelay = (delay: number) => {
+    const getDelayClass = (delay?: number) => {
+        if (delay === undefined || delay === null) return delayColors.missing;
+        if (delay > 120) return delayColors.late2;
+        if (delay > 60) return delayColors.late1;
+        if (delay < -120) return delayColors.early2;
+        if (delay < -60) return delayColors.early1;
+        return delayColors.onTime;
+    };
+
+    const formatDelay = (delay?: number) => {
+        if (delay === undefined || delay === null) return "+0s";
         if (delay === 0) return "+0";
         const sign = delay > 0 ? "+" : "-";
         const minutes = Math.floor(Math.abs(delay) / 60);
@@ -41,17 +66,17 @@ const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose }) => {
 
     return (
         <div className="absolute top-[85px] left-4 w-[30%] max-w-[400px] h-[80vh] bg-white rounded-lg shadow-lg font-[Segoe_UI] overflow-y-auto p-4 z-[9999] transition-all duration-300
-                    md:w-[40%] sm:w-[90%] sm:left-[5%] sm:top-[70px] sm:h-[70vh]">
+                        md:w-[40%] sm:w-[90%] sm:left-[5%] sm:top-[70px] sm:h-[70vh]">
             {/* HEADER */}
             <div className="flex items-center mb-3 relative">
-                <div className=" bg-red-700 p-2 text-white rounded-full flex items-center justify-center font-bold text-lg mr-3">
+                <div className="bg-red-700 p-2 text-white rounded-full flex items-center justify-center font-bold text-lg mr-3">
                     {route.properties.route_short_name}
                 </div>
                 <div className="flex-1">
                     <h3 className="text-[1.05em] font-semibold text-gray-800 leading-tight">
                         {route.properties.route_long_name}
                     </h3>
-                    <p className="text-sm text-gray-500">{route.properties.route_id}</p>
+                    <p className="text-sm text-gray-500">{route.route_id}</p>
                 </div>
                 <button
                     onClick={onClose}
@@ -63,38 +88,41 @@ const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose }) => {
 
             {/* TIMELINE */}
             <div className="relative mt-4 pl-6 pr-4">
-                {/* Blue vertical line */}
                 <div className="absolute left-[35%] sm:left-[25%] top-0 bottom-0 w-[2px] bg-blue-600 rounded-full z-0" />
 
                 <ul className="list-none p-0 m-0 relative">
-                    {stops.map((stop, i) => (
-                        <li
-                            key={stop.stop_id}
-                            className="relative flex items-center my-4 z-10"
-                        >
-                            {/* Left info */}
-                            <div className="flex gap-1 justify-end text-right text-[0.9em] w-[10%] sm:w-[20%] md:w-[12%] pr-2">
-                                <span className={`font-semibold ${getDelayClass(stop.delay ?? 0)}`}>
-                                  {formatDelay(stop.delay ?? 0)}
-                                </span>
-                                <span className="text-gray-600">{stop.arrival_time || "00:00"}</span>
-                            </div>
+                    {stops.map((stop, i) => {
+                        const stopTime = stop.stop_times?.[0]; // use the first stop_time if available
+                        console.log(`[RouteInfoPanel] stop ${i}:`, stop, stopTime);
 
-                            {/* Center dot */}
-                            <div
-                                className="absolute bg-white border-2 border-blue-600 rounded-full w-[10px] h-[10px] z-10"
-                                style={{
-                                    left: "21%",
-                                    transform: "translateX(-50%)",
-                                }}
-                            ></div>
+                        return (
+                            <li key={stop.stop_id} className="relative flex items-center my-4 z-10">
+                                {/* Left info */}
+                                <div className="flex flex-col items-end text-[0.9em] w-[12%] pr-2">
+                                    {stopTime && (
+                                        <>
+                                            <span className={`font-semibold ${getDelayClass(stopTime.delay)}`}>
+                                              {formatDelay(stopTime.delay)}
+                                            </span>
+                                            <span className="text-gray-600">{stopTime.arrival_time || "00:00"}</span>
+                                            <span className="text-gray-400 text-[0.75em]">{stopTime.departure_time || ""}</span>
+                                        </>
+                                    )}
+                                </div>
 
-                            {/* Stop name */}
-                            <div className="flex-1 ml-13">
-                                <span className="text-gray-900 text-[0.95em]">{stop.stop_name}</span>
-                            </div>
-                        </li>
-                    ))}
+                                {/* Center dot */}
+                                <div
+                                    className="absolute bg-white border-2 border-blue-600 rounded-full w-[10px] h-[10px] z-10"
+                                    style={{ left: "21%", transform: "translateX(-50%)" }}
+                                />
+
+                                {/* Stop name */}
+                                <div className="flex-1 ml-13">
+                                    <span className="text-gray-900 text-[0.95em]">{stop.stop_name}</span>
+                                </div>
+                            </li>
+                        );
+                    })}
                 </ul>
             </div>
         </div>
