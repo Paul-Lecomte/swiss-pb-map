@@ -4,6 +4,7 @@ interface StopTime {
     arrival_time?: string;
     departure_time?: string;
     delay?: number;
+    stop_sequence?: number;
 }
 
 interface Stop {
@@ -39,12 +40,12 @@ const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose }) => {
     const stops = route.properties.stops || [];
 
     const delayColors = {
-        late2: "text-red-600",    // > 2 min late
-        late1: "text-orange-500", // > 1 min late
-        onTime: "text-green-700", // ±1 min
-        early2: "text-blue-600",  // > 2 min early
-        early1: "text-cyan-500",  // > 1 min early
-        missing: "text-grey-400", // undefined/null
+        late2: "text-red-600",
+        late1: "text-orange-500",
+        onTime: "text-green-700",
+        early2: "text-blue-600",
+        early1: "text-cyan-500",
+        missing: "text-grey-400",
     };
 
     const getDelayClass = (delay?: number) => {
@@ -92,17 +93,19 @@ const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose }) => {
 
                 <ul className="list-none p-0 m-0 relative">
                     {stops.map((stop, i) => {
-                        const stopTime = stop.stop_times?.[0]; // use the first stop_time if available
-                        console.log(`[RouteInfoPanel] stop ${i}:`, stop, stopTime);
+                        const stopTime = stop.stop_times?.[0]; // use first stop_time
+                        const key = stopTime
+                            ? `${stop.stop_id}-${stopTime.stop_sequence}`
+                            : `${stop.stop_id}-${i}`;
 
                         return (
-                            <li key={stop.stop_id} className="relative flex items-center my-4 z-10">
+                            <li key={key} className="relative flex items-center my-4 z-10">
                                 {/* Left info */}
                                 <div className="flex flex-col items-end text-[0.9em] w-[12%] pr-2">
                                     {stopTime && (
                                         <>
                                             <span className={`font-semibold ${getDelayClass(stopTime.delay)}`}>
-                                              {formatDelay(stopTime.delay)}
+                                                {formatDelay(stopTime.delay)}
                                             </span>
                                             <span className="text-gray-600">{stopTime.arrival_time || "00:00"}</span>
                                             <span className="text-gray-400 text-[0.75em]">{stopTime.departure_time || ""}</span>
