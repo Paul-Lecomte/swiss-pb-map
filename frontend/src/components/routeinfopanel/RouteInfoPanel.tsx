@@ -15,10 +15,10 @@ interface Stop {
 
 interface Route {
     route_id: string;
-    route_short_name: string;
-    route_long_name?: string;
     properties: {
         stops: Stop[];
+        route_short_name: string;
+        route_long_name?: string;
     };
 }
 

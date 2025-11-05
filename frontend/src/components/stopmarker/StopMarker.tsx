@@ -61,13 +61,13 @@ const StopMarker: React.FC<StopPopupProps> = ({ stop }) => {
         return '#777';
     };
 
-    const lat = stop.stop_lat ?? stop.geometry?.coordinates[1];
-    const lon = stop.stop_lon ?? stop.geometry?.coordinates[0];
+    const lat = Number(stop.stop_lat ?? stop.geometry?.coordinates[1]);
+    const lon = Number(stop.stop_lon ?? stop.geometry?.coordinates[0]);
     const name = stop.stop_name ?? stop.properties?.stop_name;
     const routes = stop.properties.routes;
 
     return (
-        <Marker position={[lat, lon]} icon={getStopIcon(routeDesc)}>
+        <Marker position={[lat, lon]} icon={getStopIcon(routeDesc) as any}>
             <Popup>
                 <div className="custom-popup">
                     <button

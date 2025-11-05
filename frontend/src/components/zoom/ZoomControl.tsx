@@ -10,7 +10,7 @@ const ZoomControlLeaflet = L.Control.extend({
     position: "topright", // comme les contrôles natifs
   },
 
-  onAdd: function (map: L.Map) {
+  onAdd: function (map: any) {
     const container = L.DomUtil.create("div", "zoom-control");
 
     // Empêche la map de bouger quand on clique sur le contrôle
@@ -49,6 +49,6 @@ const ZoomControlLeaflet = L.Control.extend({
 });
 
 // Convertit en composant React
-const ZoomControl = createControlComponent((props) => new ZoomControlLeaflet(props));
+const ZoomControl = createControlComponent((props: any) => new ZoomControlLeaflet(props) as any);
 
 export default ZoomControl;

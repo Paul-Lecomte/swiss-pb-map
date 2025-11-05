@@ -11,6 +11,7 @@ import RouteLine from "@/components//route_line/RouteLine";
 import Search from "@/components/search/Search";
 import RouteInfoPanel from "@/components/routeinfopanel/RouteInfoPanel";
 import L from "leaflet";
+import Vehicle from "@/components/vehicle/Vehicle";
 
 // Layer visibility state type
 type LayerKeys = "railway" | "stations" | "tram" | "bus" | "trolleybus" | "ferry" | "backgroundPois";
@@ -23,7 +24,7 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
     const [mapReady, setMapReady] = useState(false);
     const [pendingCenter, setPendingCenter] = useState<{ lat: number; lon: number; zoom?: number } | null>(null);
     const [routes, setRoutes] = useState<any[]>([]);
-    const mapRef = useRef<L.Map | null>(null);
+    const mapRef = useRef<any>(null);
     const [selectedRoute, setSelectedRoute] = useState<any | null>(null);
 
     // Ajout pour le highlight
@@ -116,7 +117,7 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
         useEffect(() => {
             if (map && !loggedRef.current) {
                 console.log("[Map] MapRefBinder: map attached");
-                mapRef.current = map as unknown as L.Map;
+                mapRef.current = map as any; // avoid referencing L.Map in TS shim
                 setMapReady(true);
                 loggedRef.current = true;
             }
@@ -126,7 +127,7 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
 
     function MapEvents() {
         useMapEvents({
-            moveend: (e) => {
+            moveend: (e: any) => {
                 const map = e.target;
                 const bounds = map.getBounds();
                 const bbox = [
@@ -141,7 +142,7 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
                 loadStops(bbox, currentZoom, maxZoom);
                 loadRoutes(bbox, currentZoom);
             },
-            zoomend: (e) => {
+            zoomend: (e: any) => {
                 const map = e.target;
                 const bounds = map.getBounds();
                 const bbox = [
@@ -334,6 +335,23 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
         }, {})
     );
 
+    // Compute visible routes once so we can render lines and vehicles consistently
+    const visibleRoutes = uniqueRoutes.filter((route: any) => {
+        if (highlightedRouteId) {
+            const id =
+                route.properties?.route_id ||
+                `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
+            return id === highlightedRouteId;
+        }
+        const mode = detectRouteMode(route);
+        if (mode === "railway") return layersVisible.railway;
+        if (mode === "tram") return layersVisible.tram;
+        if (mode === "bus") return layersVisible.bus;
+        if (mode === "trolleybus") return layersVisible.trolleybus;
+        if (mode === "ferry") return layersVisible.ferry;
+        return true;
+    });
+
     return (
         <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", zIndex: 0 }}>
             <div style={{
@@ -356,9 +374,9 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
                 maxZoom={tileLayer.maxZoom || 17}
                 zoomControl={false}
                 style={{ position: "relative", width: "100%", height: "100%" }}
-                whenCreated={mapInstance => {
+                whenCreated={(mapInstance: any) => {
                     console.log("[Map] whenCreated: map instance ready", !!mapInstance);
-                    mapRef.current = mapInstance;
+                    mapRef.current = mapInstance as any;
                     setMapReady(true);
                     console.log("[Map] mapReady set to true");
                 }}
@@ -369,22 +387,7 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
                 <MapRefBinder />
                 <MapEvents />
 
-                {uniqueRoutes
-                    .filter((route: any) => {
-                        if (highlightedRouteId) {
-                            const id =
-                                route.properties?.route_id ||
-                                `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
-                            return id === highlightedRouteId;
-                        }
-                        const mode = detectRouteMode(route);
-                        if (mode === "railway") return layersVisible.railway;
-                        if (mode === "tram") return layersVisible.tram;
-                        if (mode === "bus") return layersVisible.bus;
-                        if (mode === "trolleybus") return layersVisible.trolleybus;
-                        if (mode === "ferry") return layersVisible.ferry;
-                        return true;
-                    })
+                {visibleRoutes
                     .map((route: any) => {
                         const id =
                             route.properties?.route_id ||
@@ -399,6 +402,48 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
                             />
                         );
                     })}
+
+                {/* Render vehicles for visible routes that have at least two coordinates and stop times */}
+                {visibleRoutes.map((route: any) => {
+                    const id =
+                        route.properties?.route_id ||
+                        `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
+                    const coords = route.geometry?.coordinates || [];
+                    if (!coords || coords.length < 2) return null;
+                    const positions = coords
+                        .map((c: any) => {
+                            const lon = Number(c[0]);
+                            const lat = Number(c[1]);
+                            if (Number.isFinite(lat) && Number.isFinite(lon)) return [lat, lon];
+                            return null;
+                        })
+                        .filter(Boolean) as [number, number][];
+
+                    const stops = route.properties?.stops || [];
+                    // Prepare stopTimes array expected by Vehicle: include stop_lat/stop_lon and first stop_time
+                    const stopTimesForVehicle = stops.map((s: any) => ({
+                        stop_id: s.stop_id,
+                        stop_lat: s.stop_lat,
+                        stop_lon: s.stop_lon,
+                        arrival_time: s.stop_times && s.stop_times[0] ? s.stop_times[0].arrival_time : undefined,
+                        departure_time: s.stop_times && s.stop_times[0] ? s.stop_times[0].departure_time : undefined,
+                        stop_sequence: s.stop_sequence
+                    }));
+
+                    // only render vehicle if we have at least 2 stops with times
+                    const validStopTimesCount = stopTimesForVehicle.filter((st: any) => st.arrival_time || st.departure_time).length;
+                    if (validStopTimesCount < 2) return null;
+
+                    return (
+                        <Vehicle
+                            key={`veh-${id}`}
+                            routeId={id}
+                            coordinates={positions}
+                            stopTimes={stopTimesForVehicle}
+                            color={route.properties?.route_color}
+                        />
+                    );
+                })}
 
                 {selectedRoute && (
                     <RouteInfoPanel
