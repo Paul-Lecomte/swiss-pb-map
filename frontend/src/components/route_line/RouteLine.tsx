@@ -1,4 +1,3 @@
-// typescript
 import React from "react";
 import { Polyline, CircleMarker } from "react-leaflet";
 
