@@ -1,7 +1,6 @@
-// TODO : preprocess the stop_times with the trip_id for faster loading current load is an average of 9000ms
 const asyncHandler = require('express-async-handler');
 const ProcessedRoute = require('../model/processedRoutesModel');
-const StopTime = require('../model/stopTimesModel');
+const ProcessedStopTimes = require('../model/processedStopTimesModel');
 
 const getRoutesInBbox = asyncHandler(async (req, res) => {
     const { bbox } = req.query;
@@ -26,31 +25,30 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
     const tripIds = routes.map(r => r.trip_id).filter(Boolean);
     if (!tripIds.length) return res.json({ type: "FeatureCollection", features: [] });
 
-    //  Fetch all stop_times for these trip_ids (lean + select only needed fields)
-    const allStopTimes = await StopTime.find(
+    //  Fetch all preprocessed stop_times for these trip_ids
+    const allStopTimes = await ProcessedStopTimes.find(
         { trip_id: { $in: tripIds } },
-        { trip_id: 1, stop_id: 1, arrival_time: 1, departure_time: 1, stop_sequence: 1 }
-    ).sort({ stop_sequence: 1 }).lean();
+        { trip_id: 1, stop_times: 1 }
+    ).lean();
 
-    //  Map stop_times by trip_id -> stop_id for fast access
-    const stopTimesMap = {}; // { [trip_id]: { [stop_id]: stopTime } }
-    allStopTimes.forEach(st => {
-        if (!stopTimesMap[st.trip_id]) stopTimesMap[st.trip_id] = {};
-        stopTimesMap[st.trip_id][st.stop_id] = {
-            arrival_time: st.arrival_time,
-            departure_time: st.departure_time,
-            stop_sequence: st.stop_sequence
-        };
+    //  Map stop_times by trip_id for fast access
+    const stopTimesMap = {}; // { [trip_id]: [stop_times] }
+    allStopTimes.forEach(doc => {
+        stopTimesMap[doc.trip_id] = doc.stop_times;
     });
 
     //  Attach stop_times to stops in each route
     const features = routes.map(route => {
-        const tripStopTimes = stopTimesMap[route.trip_id] || {};
+        const tripStopTimes = stopTimesMap[route.trip_id] || [];
 
-        const stopsWithTimes = route.stops.map(stop => ({
-            ...stop,
-            stop_times: tripStopTimes[stop.stop_id] ? [tripStopTimes[stop.stop_id]] : []
-        }));
+        const stopsWithTimes = route.stops.map(stop => {
+            // attach stop_times that match this stop_id
+            const st = tripStopTimes.filter(st => st.stop_id === stop.stop_id);
+            return {
+                ...stop,
+                stop_times: st
+            };
+        });
 
         return {
             type: "Feature",
