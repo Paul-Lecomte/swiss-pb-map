@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "nodemon server.js",
     "update-routes": "node --max-old-space-size=32768 utils/gtfsDataUpdater.js --processedroutes",
+    "update-stoptimes": "node --max-old-space-size=32768 utils/gtfsDataUpdater.js --processedstoptimes",
     "update-gtfs": "node --max-old-space-size=32768 utils/gtfsDataUpdater.js --base"
   },
   "author": "Lecomte Paul",
