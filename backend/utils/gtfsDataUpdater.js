@@ -16,6 +16,9 @@
  * 5. Update only base GTFS collections (skip ProcessedStops and ProcessedRoute):
  *    node backend/utils/gtfsDataUpdater.js --base
  *
+ * 6. update the ProcessedStopTimes collection:
+ *   node backend/utils/gtfsDataUpdater.js --processedstoptimes
+ *
  * Run these commands in the terminal at the project root.
  */
 
@@ -45,6 +48,7 @@ const Transfer = require('../model/transfersModel');
 const Trip = require('../model/tripsModel');
 const ProcessedStop = require('../model/processedStopsModel');
 const ProcessedRoute = require('../model/processedRoutesModel');
+const ProcessedStopTimes = require('../model/processedStopTimesModel');
 
 const pipeline = promisify(stream.pipeline);
 const DATA_DIR = path.join(__dirname, '../backend/data/gtfs_data');
@@ -279,6 +283,84 @@ async function parseCSV(fileName, model, name, { saveToDB = true } = {}) {
             console.error(`Parser error on ${fileName}:`, err);
             reject(err);
         });
+    });
+}
+
+
+// -------------------------
+// ProcessedStopTimes helpers
+// -------------------------
+
+async function populateProcessedStopTimes() {
+    const filePath = path.join(DATA_DIR, 'stop_times.txt');
+
+    console.log('Processing trips.txt (returning in memory)...');
+    const trips = await parseCSV('trips.txt', null, 'Trip', { saveToDB: false });
+    console.log(`✅ Loaded ${trips.length} trips from trips.txt`);
+    console.log('Sample trip:', trips[0]);
+
+    const tripMap = new Map(trips.map(t => [t.trip_id, t.route_id]));
+
+    await ProcessedStopTimes.deleteMany({});
+    console.log('Cleared ProcessedStopTimes collection.');
+
+    // 🟢 Wrap CSV parsing in a Promise so we can await it
+    await new Promise((resolve, reject) => {
+        const map = new Map();
+
+        fs.createReadStream(filePath)
+            // ✅ Force lowercase headers for consistency
+            .pipe(csv({ mapHeaders: ({ header }) => header.trim().toLowerCase() }))
+            .on('data', (row) => {
+                const tripId = row.trip_id;
+                const routeId = tripMap.get(tripId);
+
+                // Optional debug: log unexpected header cases
+                if (!tripId || !routeId) {
+                    // console.log('⚠️ Skipping row, missing keys:', Object.keys(row));
+                    return;
+                }
+
+                if (!map.has(tripId)) {
+                    map.set(tripId, {
+                        trip_id: tripId,
+                        route_id: routeId,
+                        stop_times: [],
+                    });
+                }
+
+                map.get(tripId).stop_times.push({
+                    stop_id: row.stop_id,
+                    arrival_time: row.arrival_time,
+                    departure_time: row.departure_time,
+                    stop_sequence: parseInt(row.stop_sequence),
+                });
+            })
+            .on('end', async () => {
+                try {
+                    console.log(`Parsed ${map.size} trips. Sorting and inserting...`);
+
+                    const docs = Array.from(map.values()).map(t => ({
+                        ...t,
+                        stop_times: t.stop_times.sort((a, b) => a.stop_sequence - b.stop_sequence),
+                    }));
+
+                    const batchSize = 5000;
+                    for (let i = 0; i < docs.length; i += batchSize) {
+                        await ProcessedStopTimes.insertMany(
+                            docs.slice(i, i + batchSize),
+                            { ordered: false }
+                        );
+                        console.log(`Inserted ${Math.min(i + batchSize, docs.length)} / ${docs.length}`);
+                    }
+
+                    console.log(`✅ Done. Inserted ${docs.length} processed stop time documents.`);
+                    resolve();
+                } catch (err) {
+                    reject(err);
+                }
+            })
+            .on('error', reject);
     });
 }
 
@@ -762,6 +844,12 @@ async function main() {
         }
 
         console.log('✅ Base GTFS collections updated (ProcessedStops/ProcessedRoute skipped)');
+    }
+
+    if (args.includes('--processedstoptimes')) {
+        await downloadGTFS();
+        await extractGTFS();
+        await populateProcessedStopTimes();
     }
 
     if (args.includes('--stops')) {
