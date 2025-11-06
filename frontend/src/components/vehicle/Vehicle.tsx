@@ -18,11 +18,12 @@ interface VehicleProps {
     coordinates: LatLngTuple[]; // positions along the route (lat, lon)
     stopTimes: StopTime[]; // ordered stops with times and lat/lon
     color?: string;
+    isRunning?: boolean;
 }
 
 // Parse "HH:MM:SS" possibly with hours > 24 into seconds since midnight
 const parseGtfsTime = (s?: string): number | null => {
-    if (!s || typeof s !== "string") return null;
+    if (!s) return null;
     const parts = s.split(":").map(p => parseInt(p, 10));
     if (parts.length < 2 || parts.some(isNaN)) return null;
     const hours = parts[0] || 0;
@@ -36,7 +37,7 @@ const sq = (v: number) => v * v;
 // approximate squared distance in degrees (fine for nearest index mapping)
 const dist2 = (a: LatLngTuple, b: LatLngTuple) => sq(a[0] - b[0]) + sq(a[1] - b[1]);
 
-const Vehicle: React.FC<VehicleProps> = ({ routeId, coordinates, stopTimes, color = "#FF4136" }) => {
+const Vehicle: React.FC<VehicleProps> = ({ routeId: _routeId, coordinates, stopTimes, color = "#FF4136", isRunning = false }) => {
     // recompute caches when inputs change (must be available during first render)
     const cache = useMemo(() => {
         const coords = (coordinates || []).map(c => [Number(c[0]), Number(c[1])] as LatLngTuple);
@@ -191,10 +192,10 @@ const Vehicle: React.FC<VehicleProps> = ({ routeId, coordinates, stopTimes, colo
             pathOptions={{
                 color,
                 fillColor: color,
-                fillOpacity: 1,
-                weight: 1,
+                fillOpacity: isRunning ? 1 : 0.9,
+                weight: isRunning ? 2 : 1,
             }}
-            radius={6}
+            radius={isRunning ? 8 : 6}
         />
     );
 };
