@@ -297,34 +297,53 @@ async function populateProcessedStopTimes() {
     console.log('Processing trips.txt (returning in memory)...');
     const trips = await parseCSV('trips.txt', null, 'Trip', { saveToDB: false });
     console.log(`✅ Loaded ${trips.length} trips from trips.txt`);
-    console.log('Sample trip:', trips[0]);
 
-    const tripMap = new Map(trips.map(t => [t.trip_id, t.route_id]));
+    // Build trip map with route_id and service_id
+    const tripMap = new Map(trips.map(t => [t.trip_id, { route_id: t.route_id, service_id: t.service_id }]));
+
+    // Load calendar.txt
+    const calendars = await parseCSV('calendar.txt', null, 'Calendar', { saveToDB: false });
+    const calendarMap = new Map(calendars.map(c => [
+        c.service_id,
+        {
+            monday: parseInt(c.monday),
+            tuesday: parseInt(c.tuesday),
+            wednesday: parseInt(c.wednesday),
+            thursday: parseInt(c.thursday),
+            friday: parseInt(c.friday),
+            saturday: parseInt(c.saturday),
+            sunday: parseInt(c.sunday),
+            start_date: c.start_date,
+            end_date: c.end_date
+        }
+    ]));
+
+    // Load calendar_dates.txt
+    const calendarDates = await parseCSV('calendar_dates.txt', null, 'CalendarDate', { saveToDB: false });
+    const calendarDateMap = new Map();
+    for (const cd of calendarDates) {
+        if (!calendarDateMap.has(cd.service_id)) calendarDateMap.set(cd.service_id, []);
+        calendarDateMap.get(cd.service_id).push({ date: cd.date, exception_type: parseInt(cd.exception_type) });
+    }
 
     await ProcessedStopTimes.deleteMany({});
     console.log('Cleared ProcessedStopTimes collection.');
 
-    // 🟢 Wrap CSV parsing in a Promise so we can await it
     await new Promise((resolve, reject) => {
         const map = new Map();
 
         fs.createReadStream(filePath)
-            // ✅ Force lowercase headers for consistency
             .pipe(csv({ mapHeaders: ({ header }) => header.trim().toLowerCase() }))
             .on('data', (row) => {
                 const tripId = row.trip_id;
-                const routeId = tripMap.get(tripId);
-
-                // Optional debug: log unexpected header cases
-                if (!tripId || !routeId) {
-                    // console.log('⚠️ Skipping row, missing keys:', Object.keys(row));
-                    return;
-                }
+                const tripInfo = tripMap.get(tripId);
+                if (!tripId || !tripInfo) return;
 
                 if (!map.has(tripId)) {
                     map.set(tripId, {
                         trip_id: tripId,
-                        route_id: routeId,
+                        route_id: tripInfo.route_id,
+                        service_id: tripInfo.service_id,
                         stop_times: [],
                     });
                 }
@@ -340,35 +359,36 @@ async function populateProcessedStopTimes() {
                 try {
                     console.log(`Parsed ${map.size} trips. Sorting and inserting...`);
 
-                    const docs = Array.from(map.values()).map(t => ({
-                        ...t,
-                        stop_times: t.stop_times.sort((a, b) => a.stop_sequence - b.stop_sequence),
-                    }));
+                    const docs = Array.from(map.values()).map(doc => {
+                        // sort stop_times
+                        const stop_times = doc.stop_times.sort((a, b) => a.stop_sequence - b.stop_sequence);
 
-                    // enrich docs with route_start_time / route_stop_time
-                    const enrichedDocs = docs.map(doc => {
-                        const times = [];
-                        for (const st of doc.stop_times) {
-                            if (st.arrival_time) times.push(st.arrival_time);
-                            else if (st.departure_time) times.push(st.departure_time);
-                        }
-                        // find min and max lexicographically by HH:MM:SS works for GTFS times including >24
-                        const start = times.length ? times.reduce((a, b) => (a < b ? a : b)) : null;
-                        const stop = times.length ? times.reduce((a, b) => (a > b ? a : b)) : null;
+                        // compute start & stop time
+                        const times = stop_times.map(st => st.arrival_time || st.departure_time).filter(Boolean);
+                        const route_start_time = times.length ? times.reduce((a, b) => (a < b ? a : b)) : null;
+                        const route_stop_time = times.length ? times.reduce((a, b) => (a > b ? a : b)) : null;
+
+                        // enrich with calendar + calendar dates
+                        const calendar = doc.service_id ? calendarMap.get(doc.service_id) || null : null;
+                        const calendar_dates = doc.service_id ? calendarDateMap.get(doc.service_id) || [] : [];
+
                         return {
                             ...doc,
-                            route_start_time: start,
-                            route_stop_time: stop
+                            stop_times,
+                            route_start_time,
+                            route_stop_time,
+                            calendar,
+                            calendar_dates
                         };
                     });
 
                     const batchSize = 5000;
-                    for (let i = 0; i < enrichedDocs.length; i += batchSize) {
+                    for (let i = 0; i < docs.length; i += batchSize) {
                         await ProcessedStopTimes.insertMany(
-                            enrichedDocs.slice(i, i + batchSize),
+                            docs.slice(i, i + batchSize),
                             { ordered: false }
                         );
-                        console.log(`Inserted ${Math.min(i + batchSize, enrichedDocs.length)} / ${enrichedDocs.length}`);
+                        console.log(`Inserted ${Math.min(i + batchSize, docs.length)} / ${docs.length}`);
                     }
 
                     console.log(`✅ Done. Inserted ${docs.length} processed stop time documents.`);
