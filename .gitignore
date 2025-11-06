@@ -48,3 +48,5 @@
 # random things
 /frontend/public/random
 /backend/data
+
+frontend/package-lock.json
