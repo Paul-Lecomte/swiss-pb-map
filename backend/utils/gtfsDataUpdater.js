@@ -345,13 +345,30 @@ async function populateProcessedStopTimes() {
                         stop_times: t.stop_times.sort((a, b) => a.stop_sequence - b.stop_sequence),
                     }));
 
+                    // enrich docs with route_start_time / route_stop_time
+                    const enrichedDocs = docs.map(doc => {
+                        const times = [];
+                        for (const st of doc.stop_times) {
+                            if (st.arrival_time) times.push(st.arrival_time);
+                            else if (st.departure_time) times.push(st.departure_time);
+                        }
+                        // find min and max lexicographically by HH:MM:SS works for GTFS times including >24
+                        const start = times.length ? times.reduce((a, b) => (a < b ? a : b)) : null;
+                        const stop = times.length ? times.reduce((a, b) => (a > b ? a : b)) : null;
+                        return {
+                            ...doc,
+                            route_start_time: start,
+                            route_stop_time: stop
+                        };
+                    });
+
                     const batchSize = 5000;
-                    for (let i = 0; i < docs.length; i += batchSize) {
+                    for (let i = 0; i < enrichedDocs.length; i += batchSize) {
                         await ProcessedStopTimes.insertMany(
-                            docs.slice(i, i + batchSize),
+                            enrichedDocs.slice(i, i + batchSize),
                             { ordered: false }
                         );
-                        console.log(`Inserted ${Math.min(i + batchSize, docs.length)} / ${docs.length}`);
+                        console.log(`Inserted ${Math.min(i + batchSize, enrichedDocs.length)} / ${enrichedDocs.length}`);
                     }
 
                     console.log(`✅ Done. Inserted ${docs.length} processed stop time documents.`);
@@ -947,3 +964,4 @@ async function findMainTripsForRoutes(fileName, countsMap) {
         });
     });
 }
+
