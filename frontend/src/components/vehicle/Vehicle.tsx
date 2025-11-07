@@ -1,7 +1,8 @@
 "use client";
 import React, { useEffect, useRef, useState, useMemo } from "react";
-import { CircleMarker } from "react-leaflet";
-// don't import types from leaflet to avoid missing @types; declare local tuple
+import { Marker } from "react-leaflet";
+import L from "leaflet"; // <- import Leaflet for DivIcon
+
 type LatLngTuple = [number, number];
 
 interface StopTime {
@@ -15,8 +16,9 @@ interface StopTime {
 
 interface VehicleProps {
     routeId: string;
-    coordinates: LatLngTuple[]; // positions along the route (lat, lon)
-    stopTimes: StopTime[]; // ordered stops with times and lat/lon
+    routeShortName?: string; // <--- new prop for visual label
+    coordinates: LatLngTuple[];
+    stopTimes: StopTime[];
     color?: string;
     isRunning?: boolean;
 }
@@ -33,15 +35,19 @@ const parseGtfsTime = (s?: string): number | null => {
 };
 
 const sq = (v: number) => v * v;
-
-// approximate squared distance in degrees (fine for nearest index mapping)
 const dist2 = (a: LatLngTuple, b: LatLngTuple) => sq(a[0] - b[0]) + sq(a[1] - b[1]);
 
-const Vehicle: React.FC<VehicleProps> = ({ routeId: _routeId, coordinates, stopTimes, color = "#FF4136", isRunning = false }) => {
-    // recompute caches when inputs change (must be available during first render)
+const Vehicle: React.FC<VehicleProps> = ({
+                                             routeId: _routeId,
+                                             routeShortName,
+                                             coordinates,
+                                             stopTimes,
+                                             color = "#FF4136",
+                                             isRunning = false,
+                                         }) => {
     const cache = useMemo(() => {
         const coords = (coordinates || []).map(c => [Number(c[0]), Number(c[1])] as LatLngTuple);
-        // For each stop, find nearest index in coords
+
         const stopIndices: number[] = [];
         const stopTimesSec: (number | null)[] = [];
 
@@ -51,7 +57,6 @@ const Vehicle: React.FC<VehicleProps> = ({ routeId: _routeId, coordinates, stopT
             if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
                 stopIndices.push(-1);
             } else {
-                // find nearest
                 let bestIdx = -1;
                 let bestD = Infinity;
                 for (let i = 0; i < coords.length; i++) {
@@ -66,13 +71,7 @@ const Vehicle: React.FC<VehicleProps> = ({ routeId: _routeId, coordinates, stopT
             stopTimesSec.push(parseGtfsTime(s.arrival_time ?? s.departure_time ?? undefined));
         }
 
-        // Build segments between valid consecutive stops
-        type Seg = {
-            startIdx: number;
-            endIdx: number;
-            startSec: number;
-            endSec: number;
-        };
+        type Seg = { startIdx: number; endIdx: number; startSec: number; endSec: number };
         const segments: Seg[] = [];
         for (let i = 0; i < stopIndices.length - 1; i++) {
             let a = stopIndices[i];
@@ -80,15 +79,11 @@ const Vehicle: React.FC<VehicleProps> = ({ routeId: _routeId, coordinates, stopT
             const as = stopTimesSec[i];
             const bs = stopTimesSec[i + 1];
             if (a >= 0 && b >= 0 && as != null && bs != null && bs >= as) {
-                // Ensure indices are ordered along the geometry; if not, swap them but keep times aligned
-                if (a > b) {
-                    const tmpIdx = a; a = b; b = tmpIdx;
-                }
+                if (a > b) [a, b] = [b, a];
                 if (a !== b) segments.push({ startIdx: a, endIdx: b, startSec: as as number, endSec: bs as number });
             }
         }
 
-        // Precompute cumulative distances along coords to allow interpolation by fraction
         const cumDist: number[] = [0];
         for (let i = 1; i < coords.length; i++) {
             const a = coords[i - 1];
@@ -101,8 +96,7 @@ const Vehicle: React.FC<VehicleProps> = ({ routeId: _routeId, coordinates, stopT
         return { coords, stopIndices, stopTimesSec, segments, cumDist };
     }, [coordinates, stopTimes]);
 
-    // synchronous helper to compute position for a given seconds-of-day using the cache
-    const computePositionForSeconds = (secondsNow: number) : LatLngTuple | null => {
+    const computePositionForSeconds = (secondsNow: number): LatLngTuple | null => {
         const c = cache;
         if (!c || !c.segments || c.segments.length === 0) {
             if (c.coords && c.coords.length) return c.coords[0];
@@ -119,7 +113,6 @@ const Vehicle: React.FC<VehicleProps> = ({ routeId: _routeId, coordinates, stopT
             const last = c.segments[c.segments.length - 1];
             if (secondsNow < first.startSec) return c.coords[first.startIdx];
             if (secondsNow > last.endSec) return c.coords[last.endIdx];
-            // find nearest by time
             let best = c.segments[0];
             let bestDist = Math.abs(secondsNow - best.endSec);
             for (const s of c.segments) {
@@ -143,27 +136,17 @@ const Vehicle: React.FC<VehicleProps> = ({ routeId: _routeId, coordinates, stopT
         const localFrac = (targetDist - d0) / Math.max(1e-6, (d1 - d0));
         const a = c.coords[i];
         const b = c.coords[i + 1] ?? a;
-        const lat = a[0] + (b[0] - a[0]) * localFrac;
-        const lon = a[1] + (b[1] - a[1]) * localFrac;
-        return [lat, lon];
+        return [a[0] + (b[0] - a[0]) * localFrac, a[1] + (b[1] - a[1]) * localFrac];
     };
 
-    // initial position computed synchronously from cache and current time to avoid jumping to start on remount
     const now = new Date();
     const secondsNow = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
     const initialPos = computePositionForSeconds(secondsNow);
 
     const [position, setPosition] = useState<LatLngTuple | null>(initialPos);
-
-    // Keep stable refs so re-renders or remounts recompute purely from time and geometry
     const rafRef = useRef<number | null>(null);
-    const coordsRef = useRef<LatLngTuple[]>(coordinates || []);
-    const stopsRef = useRef<StopTime[]>(stopTimes || []);
 
     useEffect(() => {
-        coordsRef.current = cache.coords;
-        stopsRef.current = stopTimes || [];
-
         const tick = () => {
             const now = new Date();
             const secondsNow = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
@@ -186,18 +169,27 @@ const Vehicle: React.FC<VehicleProps> = ({ routeId: _routeId, coordinates, stopT
 
     if (!position) return null;
 
-    return (
-        <CircleMarker
-            center={position as LatLngTuple}
-            pathOptions={{
-                color,
-                fillColor: color,
-                fillOpacity: isRunning ? 1 : 0.9,
-                weight: isRunning ? 2 : 1,
-            }}
-            radius={isRunning ? 8 : 6}
-        />
-    );
+    // Create DivIcon with Leaflet
+    const icon = new L.DivIcon({
+        html: `<div style="
+            width: ${isRunning ? 24 : 20}px;
+            height: ${isRunning ? 24 : 20}px;
+            background-color: ${color};
+            color: white;
+            font-size: ${isRunning ? 12 : 10}px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            border: ${isRunning ? "2px solid black" : "1px solid #333"};
+        ">${routeShortName || ""}</div>`,
+        className: "",
+        iconSize: [isRunning ? 24 : 20, isRunning ? 24 : 20],
+        iconAnchor: [isRunning ? 12 : 10, isRunning ? 12 : 10],
+    });
+
+    return <Marker position={position as LatLngTuple} icon={icon} />;
 };
 
 export default Vehicle;
