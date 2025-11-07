@@ -668,6 +668,10 @@ async function loadTripShapeMap() {
 // File-based ProcessedRoutes (memory efficient)
 // -------------------------
 
+// -------------------------
+// File-based ProcessedRoutes (memory efficient)
+// -------------------------
+
 async function populateProcessedRoutesFromFiles() {
     console.log('Starting file-based population of ProcessedRoute (memory-efficient)...');
     await ProcessedRoute.deleteMany({});
@@ -677,6 +681,10 @@ async function populateProcessedRoutesFromFiles() {
     const counts = await countStopTimesPerTrip('stop_times.txt');
     const mainTripForRoute = await findMainTripsForRoutes('trips.txt', counts);
     const mainTripIds = new Set(mainTripForRoute.values());
+
+    // Load trips.txt into a map of trip_id → trip_headsign
+    const tripsData = await parseCSV('trips.txt', null, 'Trip', { saveToDB: false });
+    const tripHeadSignMap = new Map(tripsData.map(t => [t.trip_id, t.trip_headsign]));
 
     // Load shapes.txt and trip→shape_id mapping
     const [shapesMap, tripShapeMap] = await Promise.all([
@@ -757,6 +765,9 @@ async function populateProcessedRoutesFromFiles() {
             }
         }
 
+        // Get trip_headsign for the main trip
+        const trip_headsign = mainTripId ? tripHeadSignMap.get(mainTripId) || null : null;
+
         const processedRoute = {
             route_id: route.route_id,
             trip_id: mainTripId,
@@ -770,6 +781,7 @@ async function populateProcessedRoutesFromFiles() {
             stops: orderedStops,
             bounds,
             straight_line: geometryCoords.length < 1,
+            trip_headsign,
             geometry: {
                 type: "LineString",
                 coordinates: geometryCoords.length
