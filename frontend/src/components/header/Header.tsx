@@ -1,7 +1,7 @@
 "use client";
-import React, { useRef } from 'react';
+import React, { useRef } from "react";
 import SideMenu from "../../components/side_menu/SideMenu";
-import LayerOption from "../../components/layer_option/LayerOption";
+import LayerOption, { LayerState } from "../../components/layer_option/LayerOption";
 import Station from "../../components/station/Station";
 import Option from "../../components/option/Option";
 import About from "../../components/about/About";
@@ -10,13 +10,16 @@ import "./Header.css";
 type Props = {
     sideOpen: boolean;
     setSideOpen: (open: boolean) => void;
+    layersVisible: LayerState;
+    setLayersVisible: React.Dispatch<React.SetStateAction<LayerState>>;
 };
 
-const Header = ({ sideOpen, setSideOpen }: Props) => {
+const Header = ({ sideOpen, setSideOpen, layersVisible, setLayersVisible }: Props) => {
     const [layerOpen, setLayerOpen] = React.useState(false);
     const [stationOpen, setStationOpen] = React.useState(false);
     const [optionOpen, setOptionOpen] = React.useState(false);
     const [aboutOpen, setAboutOpen] = React.useState(false);
+
 
     // Refs for detecting clicks outside
     const sideMenuRef = useRef<HTMLDivElement>(null);
@@ -34,9 +37,8 @@ const Header = ({ sideOpen, setSideOpen }: Props) => {
                 (stationRef.current && stationRef.current.contains(target)) ||
                 (optionRef.current && optionRef.current.contains(target)) ||
                 (aboutRef.current && aboutRef.current.contains(target))
-            ) {
-                return;
-            }
+            ) return;
+
             setSideOpen(false);
             setLayerOpen(false);
             setStationOpen(false);
@@ -51,7 +53,7 @@ const Header = ({ sideOpen, setSideOpen }: Props) => {
 
     return (
         <header className="header">
-            {/* Pas de barre de recherche ici */}
+            {/* Side menu */}
             {sideOpen && (
                 <div ref={sideMenuRef} className="header-popup side">
                     <SideMenu
@@ -90,24 +92,34 @@ const Header = ({ sideOpen, setSideOpen }: Props) => {
                 </div>
             )}
 
+            {/* Layer option panel */}
             {layerOpen && (
                 <div ref={layerRef} className="header-popup layer">
-                    <LayerOption onClose={() => setLayerOpen(false)} />
+                    <LayerOption
+                        onClose={() => setLayerOpen(false)}
+                        state={layersVisible}
+                        onChange={(key, value) =>
+                            setLayersVisible(prev => ({ ...prev, [key]: value }))
+                        }
+                    />
                 </div>
             )}
 
+            {/* Station panel */}
             {stationOpen && (
                 <div ref={stationRef} className="header-popup station">
                     <Station onClose={() => setStationOpen(false)} />
                 </div>
             )}
 
+            {/* Option panel */}
             {optionOpen && (
                 <div ref={optionRef} className="header-popup option">
                     <Option onClose={() => setOptionOpen(false)} />
                 </div>
             )}
 
+            {/* About panel */}
             {aboutOpen && (
                 <div ref={aboutRef} className="header-popup about">
                     <About onClose={() => setAboutOpen(false)} />
