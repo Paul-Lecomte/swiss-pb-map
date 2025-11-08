@@ -2,10 +2,11 @@
 
 import React from "react";
 import dynamic from "next/dynamic";
+import { LayerState } from "../layer_option/LayerOption";
 
 const Map = dynamic(() => import("./Map"), { ssr: false });
 
-export default function MapWrapper({ onHamburger }: { onHamburger: () => void }) {
+export default function MapWrapper({ onHamburger, layersVisible, setLayersVisible }: { onHamburger: () => void; layersVisible: LayerState; setLayersVisible: React.Dispatch<React.SetStateAction<LayerState>> }) {
     return (
         <div
             style={{
@@ -16,7 +17,7 @@ export default function MapWrapper({ onHamburger }: { onHamburger: () => void })
                 height: "100vh",
             }}
         >
-            <Map onHamburger={onHamburger} />
+            <Map onHamburger={onHamburger} layersVisible={layersVisible} setLayersVisible={setLayersVisible} />
         </div>
     );
 }
