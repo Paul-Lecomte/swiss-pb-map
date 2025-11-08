@@ -11,11 +11,12 @@ import RouteLine from "@/components//route_line/RouteLine";
 import Search from "@/components/search/Search";
 import RouteInfoPanel from "@/components/routeinfopanel/RouteInfoPanel";
 import Vehicle from "@/components/vehicle/Vehicle";
+import { LayerState } from "../layer_option/LayerOption";
 
 // Layer visibility state type
 type LayerKeys = "railway" | "stations" | "tram" | "bus" | "trolleybus" | "ferry" | "backgroundPois";
 
-const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
+const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburger: () => void; layersVisible: LayerState; setLayersVisible: React.Dispatch<React.SetStateAction<LayerState>> }) => {
     const [stops, setStops] = useState<any[]>([]);
     const [zoom, setZoom] = useState(13);
     const [tileLayer, setTileLayer] = useState(layers[0]);
@@ -39,27 +40,21 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
         setHighlightedRouteId(null);
     };
 
-    // Visibility flags controlled by LayerOption
-    const [layersVisible, setLayersVisible] = useState<Record<LayerKeys, boolean>>({
-        railway: true,
-        stations: true,
-        tram: true,
-        bus: true,
-        trolleybus: true,
-        ferry: true,
-        backgroundPois: true,
-    });
+    // Remove app:layer-visibility listeners — Header will update layersVisible directly
 
-    // Listen to LayerOption toggle events
+    // Listen to LayerOption toggle events only for backward compat if needed — but prefer lifted state
     useEffect(() => {
-        const onToggle = (e: any) => {
-            const { key, value } = e?.detail || {};
-            if (!key) return;
-            setLayersVisible(prev => ({ ...prev, [key]: value }));
+        const handler = (e: any) => {
+            if (!e?.detail?.key) return;
+            const { key, value } = e.detail;
+            // keep parity: update lifted state if event fired
+            if (key in layersVisible) {
+                setLayersVisible(prev => ({ ...prev, [key]: value }));
+            }
         };
-        window.addEventListener("app:layer-visibility", onToggle as EventListener);
-        return () => window.removeEventListener("app:layer-visibility", onToggle as EventListener);
-    }, []);
+        window.addEventListener("app:layer-visibility", handler as EventListener);
+        return () => window.removeEventListener("app:layer-visibility", handler as EventListener);
+    }, [layersVisible, setLayersVisible]);
 
     // Helper debounce function
     function debounce<F extends (...args: any[]) => void>(fn: F, delay: number) {
@@ -370,6 +365,9 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
         return true;
     }), [uniqueRoutes, highlightedRouteId, layersVisible]);
 
+    const showAllRoutes = layersVisible.showRoutes;
+    const showAllVehicles = layersVisible.showVehicles;
+
     return (
         <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", zIndex: 0 }}>
             <div style={{
@@ -393,10 +391,8 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
                 zoomControl={false}
                 style={{ position: "relative", width: "100%", height: "100%" }}
                 whenCreated={(mapInstance: any) => {
-                    console.log("[Map] whenCreated: map instance ready", !!mapInstance);
                     mapRef.current = mapInstance as any;
                     setMapReady(true);
-                    console.log("[Map] mapReady set to true");
                 }}
             >
                 <TileLayer url={tileLayer.url} attribution={tileLayer.attribution} maxZoom={tileLayer.maxZoom} maxNativeZoom={tileLayer.maxZoom} />
@@ -405,27 +401,23 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
                 <MapRefBinder />
                 <MapEvents />
 
-                {visibleRoutes
-                    .map((route: any) => {
-                        const id =
-                            route.properties?.route_id ||
-                            `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
-                        return (
-                            <RouteLine
-                                key={id}
-                                route={route}
-                                color={route.properties?.route_color}
-                                onClick={() => handleRouteClick(route)}
-                                highlighted={highlightedRouteId === id}
-                            />
-                        );
-                    })}
+                {/* Route lines */}
+                {showAllRoutes && visibleRoutes.map((route: any) => {
+                    const id = route.properties?.route_id || `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
+                    return (
+                        <RouteLine
+                            key={id}
+                            route={route}
+                            color={route.properties?.route_color}
+                            onClick={() => handleRouteClick(route)}
+                            highlighted={highlightedRouteId === id}
+                        />
+                    );
+                })}
 
-                {/* Render vehicles for visible routes */}
-                {visibleRoutes.map((route: any) => {
-                    const id =
-                        route.properties?.route_id ||
-                        `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
+                {/* Vehicles */}
+                {showAllVehicles && visibleRoutes.map((route: any) => {
+                    const id = route.properties?.route_id || `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
                     const coords = route.geometry?.coordinates || [];
                     if (!coords || coords.length < 2) return null;
 
@@ -439,13 +431,9 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
                         .filter(Boolean) as [number, number][];
 
                     const stops = route.properties?.stops || [];
-
-                    // For each departure along this route, render a vehicle
-                    // Assume stops[i].stop_times contains multiple departures per vehicle
-                    const vehicleDepartures = stops[0]?.stop_times || []; // first stop as anchor
+                    const vehicleDepartures = stops[0]?.stop_times || [];
 
                     return vehicleDepartures.map((departure: any, idx: number) => {
-                        // Gather stopTimes for this vehicle
                         const stopTimesForVehicle = stops.map((s: any) => ({
                             stop_id: s.stop_id,
                             stop_lat: s.stop_lat,
@@ -455,7 +443,6 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
                             stop_sequence: s.stop_sequence,
                         }));
 
-                        // Skip vehicles with insufficient stopTimes
                         const validStopTimesCount = stopTimesForVehicle.filter(
                             (st: any) => st.arrival_time || st.departure_time
                         ).length;
@@ -483,17 +470,16 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
                     />
                 )}
 
-                {layersVisible.stations && (
-                    stops
-                        // Keep normal filter but allow pending stop even without routes
-                        .filter((stop: any) =>
-                            (stop.properties.routes && stop.properties.routes.length > 0) ||
-                            stop.properties.stop_id === pendingStopId
-                        )
-                        .map((stop: any, idx: number) => (
-                            <StopMarker key={idx} stop={stop} />
-                        ))
-                )}
+                {/* Stops */}
+                {layersVisible.stations && stops
+                    .filter((stop: any) =>
+                        (stop.properties.routes && stop.properties.routes.length > 0) ||
+                        stop.properties.stop_id === pendingStopId
+                    )
+                    .map((stop: any, idx: number) => (
+                        <StopMarker key={idx} stop={stop} />
+                    ))
+                }
 
                 <MapLayerSwitcher selectedLayer={tileLayer.name} onChange={(name) => {
                     const layer = layers.find(l => l.name === name);
