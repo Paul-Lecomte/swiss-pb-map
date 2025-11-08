@@ -2,43 +2,27 @@ import React from "react";
 import { Box, Typography, IconButton, Switch, FormControlLabel, Paper, Divider } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 
-type Props = { onClose?: () => void };
+type LayerKeys =
+    | "railway"
+    | "stations"
+    | "tram"
+    | "bus"
+    | "trolleybus"
+    | "ferry"
+    | "backgroundPois"
+    | "showRoutes"
+    | "showVehicles";
 
-type LayerKeys = "railway" | "stations" | "tram" | "bus" | "trolleybus" | "ferry" | "backgroundPois";
-type LayerState = Record<LayerKeys, boolean>;
+export type LayerState = Record<LayerKeys, boolean>;
 
-const labelToKey: Record<string, LayerKeys> = {
-  "Railway lines": "railway",
-  "Stations": "stations",
-  "Tram": "tram",
-  "Bus": "bus",
-  "Trolleybus": "trolleybus",
-  "Ferry": "ferry",
-  "Background POIs": "backgroundPois",
+type Props = {
+  onClose?: () => void;
+  state: LayerState;
+  onChange: (key: LayerKeys, value: boolean) => void;
 };
 
-export default function LayerOption({ onClose }: Props) {
-  const [state, setState] = React.useState<LayerState>({
-    railway: true,
-    stations: true,
-    tram: true,
-    bus: true,
-    trolleybus: true,
-    ferry: true,
-    backgroundPois: true,
-  });
-
-  const toggle = (key: LayerKeys) => (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.checked;
-    setState((prev) => ({ ...prev, [key]: value }));
-    try {
-      window.dispatchEvent(
-          new CustomEvent("app:layer-visibility", { detail: { key, value } })
-      );
-    } catch {}
-  };
-
-  const labels = [
+export default function LayerOption({ onClose, state, onChange }: Props) {
+  const labels: string[] = [
     "Railway lines",
     "Stations",
     "Tram",
@@ -46,7 +30,31 @@ export default function LayerOption({ onClose }: Props) {
     "Trolleybus",
     "Ferry",
     "Background POIs",
+    "Show all route lines",
+    "Show all vehicles",
   ];
+
+  const labelToKey: Record<string, LayerKeys> = {
+    "Railway lines": "railway",
+    "Stations": "stations",
+    "Tram": "tram",
+    "Bus": "bus",
+    "Trolleybus": "trolleybus",
+    "Ferry": "ferry",
+    "Background POIs": "backgroundPois",
+    "Show all route lines": "showRoutes",
+    "Show all vehicles": "showVehicles",
+  };
+
+  const handleToggle = (key: LayerKeys) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.checked;
+    onChange(key, value);
+
+    // Optional: dispatch event for legacy listeners
+    try {
+      window.dispatchEvent(new CustomEvent("app:layer-visibility", { detail: { key, value } }));
+    } catch {}
+  };
 
   return (
       <Paper elevation={6} sx={{ width: 280, borderRadius: 3, p: 2 }}>
@@ -66,7 +74,7 @@ export default function LayerOption({ onClose }: Props) {
                     control={
                       <Switch
                           checked={state[key]}
-                          onChange={toggle(key)}
+                          onChange={handleToggle(key)}
                           color="primary"
                       />
                     }
