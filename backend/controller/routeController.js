@@ -1,3 +1,4 @@
+// TODO OPTIMIZE: This code fetches all stop_times for all trips of the routes in the bbox, which can be a lot of data. Consider optimizing by pre-aggregating active trips or using more selective queries.
 const asyncHandler = require('express-async-handler');
 const { DateTime } = require('luxon');
 const ProcessedRoute = require('../model/processedRoutesModel');
@@ -26,7 +27,7 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
         'bounds.min_lon': { $lte: maxLng },
         'bounds.max_lon': { $gte: minLng },
         straight_line: false
-    }).limit(150).lean();
+    }).limit(100).lean();
 
     if (!routes.length) return res.json({ type: "FeatureCollection", features: [] });
 
@@ -92,6 +93,7 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
             properties: {
                 route_id: route.route_id,
                 trip_ids: activeTrips.map(t => t.trip_id),
+                trip_headsign: route.trip_headsign,
                 route_short_name: route.route_short_name,
                 route_long_name: route.route_long_name,
                 route_type: route.route_type,

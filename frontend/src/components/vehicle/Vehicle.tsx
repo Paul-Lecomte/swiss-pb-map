@@ -21,6 +21,7 @@ interface VehicleProps {
     stopTimes: StopTime[];
     color?: string;
     isRunning?: boolean;
+    onClick?: () => void;
 }
 
 // Parse "HH:MM:SS" possibly with hours > 24 into seconds since midnight
@@ -44,6 +45,7 @@ const Vehicle: React.FC<VehicleProps> = ({
                                              stopTimes,
                                              color = "#FF4136",
                                              isRunning = false,
+                                             onClick,
                                          }) => {
     const cache = useMemo(() => {
         const coords = (coordinates || []).map(c => [Number(c[0]), Number(c[1])] as LatLngTuple);
@@ -172,24 +174,33 @@ const Vehicle: React.FC<VehicleProps> = ({
     // Create DivIcon with Leaflet
     const icon = new L.DivIcon({
         html: `<div style="
-            width: ${isRunning ? 24 : 20}px;
-            height: ${isRunning ? 24 : 20}px;
-            background-color: ${color};
-            color: white;
-            font-size: ${isRunning ? 12 : 10}px;
-            font-weight: bold;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 50%;
-            border: ${isRunning ? "2px solid black" : "1px solid #333"};
-        ">${routeShortName || ""}</div>`,
+        width: ${isRunning ? 26 : 22}px;
+        height: ${isRunning ? 26 : 22}px;
+        background-color: white;
+        color: ${color};
+        font-size: ${isRunning ? 13 : 11}px;
+        font-weight: bold;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        border: 2px solid ${color};
+        box-shadow: 0 0 3px rgba(0,0,0,0.3);
+    ">${routeShortName || ""}</div>`,
         className: "",
-        iconSize: [isRunning ? 24 : 20, isRunning ? 24 : 20],
-        iconAnchor: [isRunning ? 12 : 10, isRunning ? 12 : 10],
+        iconSize: [isRunning ? 26 : 22, isRunning ? 26 : 22],
+        iconAnchor: [isRunning ? 13 : 11, isRunning ? 13 : 11],
     });
 
-    return <Marker position={position as LatLngTuple} icon={icon} />;
+    return <Marker
+        position={position as LatLngTuple}
+        icon={icon}
+        eventHandlers={{
+            click: () => {
+                if (onClick) onClick();
+            },
+        }}
+    />
 };
 
 export default Vehicle;

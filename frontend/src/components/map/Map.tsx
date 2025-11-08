@@ -410,6 +410,7 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
                         `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
                     const coords = route.geometry?.coordinates || [];
                     if (!coords || coords.length < 2) return null;
+
                     const positions = coords
                         .map((c: any) => {
                             const lon = Number(c[0]);
@@ -420,27 +421,30 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
                         .filter(Boolean) as [number, number][];
 
                     const stops = route.properties?.stops || [];
-                    // Prepare stopTimes array expected by Vehicle: include stop_lat/stop_lon and first stop_time
                     const stopTimesForVehicle = stops.map((s: any) => ({
                         stop_id: s.stop_id,
                         stop_lat: s.stop_lat,
                         stop_lon: s.stop_lon,
-                        arrival_time: s.stop_times && s.stop_times[0] ? s.stop_times[0].arrival_time : undefined,
-                        departure_time: s.stop_times && s.stop_times[0] ? s.stop_times[0].departure_time : undefined,
-                        stop_sequence: s.stop_sequence
+                        arrival_time: s.stop_times?.[0]?.arrival_time,
+                        departure_time: s.stop_times?.[0]?.departure_time,
+                        stop_sequence: s.stop_sequence,
                     }));
 
-                    // only render vehicle if we have at least 2 stops with times
-                    const validStopTimesCount = stopTimesForVehicle.filter((st: any) => st.arrival_time || st.departure_time).length;
+                    const validStopTimesCount = stopTimesForVehicle.filter(
+                        (st: any) => st.arrival_time || st.departure_time
+                    ).length;
                     if (validStopTimesCount < 2) return null;
 
                     return (
                         <Vehicle
                             key={`veh-${id}`}
                             routeId={id}
+                            routeShortName={route.properties?.route_short_name}
                             coordinates={positions}
                             stopTimes={stopTimesForVehicle}
-                            color={route.properties?.route_color}
+                            color={route.properties?.route_color || "#264653"}
+                            isRunning={true}
+                            onClick={() => handleRouteClick(route)} // ✅ click = open RouteInfoPanel
                         />
                     );
                 })}

@@ -19,6 +19,7 @@ interface Route {
         stops: Stop[];
         route_short_name: string;
         route_long_name?: string;
+        trip_headsign: string;
     };
 }
 
@@ -75,7 +76,7 @@ const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose }) => {
                 </div>
                 <div className="flex-1">
                     <h3 className="text-[1.05em] font-semibold text-gray-800 leading-tight">
-                        {route.properties.route_long_name}
+                        {route.properties.trip_headsign || "N/A"}
                     </h3>
                     <p className="text-sm text-gray-500">{route.route_id}</p>
                 </div>
@@ -93,7 +94,7 @@ const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose }) => {
 
                 <ul className="list-none p-0 m-0 relative">
                     {stops.map((stop, i) => {
-                        const stopTime = stop.stop_times?.[0]; // use first stop_time
+                        const stopTime = stop.stop_times?.[0];
                         const key = stopTime
                             ? `${stop.stop_id}-${stopTime.stop_sequence}`
                             : `${stop.stop_id}-${i}`;
