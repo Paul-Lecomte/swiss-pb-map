@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useMemo } from "react";
 import { MapContainer, TileLayer, useMapEvents, useMap } from "react-leaflet";
 import StopMarker from "@/components/stopmarker/StopMarker";
 import "leaflet/dist/leaflet.css";
@@ -10,7 +10,6 @@ import { fetchRoutesInBbox } from "../../services/RouteApiCalls";
 import RouteLine from "@/components//route_line/RouteLine";
 import Search from "@/components/search/Search";
 import RouteInfoPanel from "@/components/routeinfopanel/RouteInfoPanel";
-import L from "leaflet";
 import Vehicle from "@/components/vehicle/Vehicle";
 
 // Layer visibility state type
@@ -62,6 +61,23 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
         return () => window.removeEventListener("app:layer-visibility", onToggle as EventListener);
     }, []);
 
+    // Helper debounce function
+    function debounce<F extends (...args: any[]) => void>(fn: F, delay: number) {
+        let timeout: ReturnType<typeof setTimeout>;
+        return (...args: Parameters<F>) => {
+            if (timeout) clearTimeout(timeout);
+            timeout = setTimeout(() => fn(...args), delay);
+        };
+    }
+
+    // Expand a bbox by a relative ratio (e.g. 0.1 = 10%)
+    function expandBbox(bbox: number[], ratio: number): number[] {
+        const [minLng, minLat, maxLng, maxLat] = bbox;
+        const dLng = (maxLng - minLng) * ratio;
+        const dLat = (maxLat - minLat) * ratio;
+        return [minLng - dLng, minLat - dLat, maxLng + dLng, maxLat + dLat];
+    }
+
     const loadStops = async (bbox: number[], zoom: number, maxZoom: number) => {
         if (zoom === maxZoom) {
             const data = await fetchStopsInBbox(bbox, zoom);
@@ -71,43 +87,40 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
         }
     };
 
-    function isRouteInBbox(route: any, bbox: number[]): boolean {
-        if (!route?.geometry?.coordinates?.length) return false;
-        const [minLng, minLat, maxLng, maxLat] = bbox;
-        return route.geometry.coordinates.some(([lng, lat]: [number, number]) =>
-            lng >= minLng && lng <= maxLng && lat >= minLat && lat <= maxLat
-        );
-    }
-
-    function expandBbox(bbox: number[], ratio: number): number[] {
-        const [minLng, minLat, maxLng, maxLat] = bbox;
-        const dLng = (maxLng - minLng) * ratio;
-        const dLat = (maxLat - minLat) * ratio;
-        return [minLng - dLng, minLat - dLat, maxLng + dLng, maxLat + dLat];
-    }
-
-    const routesCacheRef = useRef<Map<string, any>>(new Map());
+    const routesCacheRef = useRef<Map<string, { route: any; bboxes: number[][] }>>(new Map());
 
     const loadRoutes = async (bbox: number[], zoom: number) => {
+        const bboxKey = bbox.join(",");
+
+        // If every cached route already has this bbox recorded, skip fetch
+        const cachedRoutes = Array.from(routesCacheRef.current.values());
+        const alreadyCached = cachedRoutes.length > 0 && cachedRoutes.every(c => c.bboxes.some(b => b.join(",") === bboxKey));
+        if (alreadyCached) return;
+
         const data = await fetchRoutesInBbox(bbox, zoom);
         const fetched = data.features || [];
 
-        // Fusionner avec le cache
+        // Merge with cache and record bbox for each route
         fetched.forEach((r: any) => {
             const id = r.properties?.route_id || `${r.properties?.route_short_name}-${r.properties?.route_long_name}`;
-            routesCacheRef.current.set(id, r);
+            if (routesCacheRef.current.has(id)) {
+                routesCacheRef.current.get(id)!.bboxes.push(bbox);
+            } else {
+                routesCacheRef.current.set(id, { route: r, bboxes: [bbox] });
+            }
         });
 
-        // On garde uniquement les routes proches de la bbox (pour éviter un cache infini)
-        const expandedBbox = expandBbox(bbox, 0.1); // 10% de marge
-        for (const [id, route] of routesCacheRef.current.entries()) {
-            if (!isRouteInBbox(route, expandedBbox)) {
-                routesCacheRef.current.delete(id);
-            }
+        // Keep only routes that intersect the expanded bbox (avoid infinite cache)
+        const expandedBbox = expandBbox(bbox, 0.1); // 10% margin
+        for (const [id, cached] of routesCacheRef.current.entries()) {
+            const inBbox = cached.route.geometry?.coordinates?.some(([lng, lat]: [number, number]) =>
+                lng >= expandedBbox[0] && lng <= expandedBbox[2] && lat >= expandedBbox[1] && lat <= expandedBbox[3]
+            );
+            if (!inBbox) routesCacheRef.current.delete(id);
         }
 
-        // Met à jour la state avec le cache actuel
-        setRoutes(Array.from(routesCacheRef.current.values()));
+        // Update state from cache
+        setRoutes(Array.from(routesCacheRef.current.values()).map(c => c.route));
     };
 
     function MapRefBinder() {
@@ -126,6 +139,13 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
     }
 
     function MapEvents() {
+        const debouncedLoad = useRef(
+            debounce((bbox: number[], currentZoom: number, maxZoom: number) => {
+                loadStops(bbox, currentZoom, maxZoom);
+                loadRoutes(bbox, currentZoom);
+            }, 650)
+        ).current;
+
         useMapEvents({
             moveend: (e: any) => {
                 const map = e.target;
@@ -139,8 +159,7 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
                 const currentZoom = map.getZoom();
                 const maxZoom = map.getMaxZoom();
                 setZoom(currentZoom);
-                loadStops(bbox, currentZoom, maxZoom);
-                loadRoutes(bbox, currentZoom);
+                debouncedLoad(bbox, currentZoom, maxZoom);
             },
             zoomend: (e: any) => {
                 const map = e.target;
@@ -154,8 +173,7 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
                 const currentZoom = map.getZoom();
                 const maxZoom = map.getMaxZoom();
                 setZoom(currentZoom);
-                loadStops(bbox, currentZoom, maxZoom);
-                loadRoutes(bbox, currentZoom);
+                debouncedLoad(bbox, currentZoom, maxZoom);
             }
         });
         return null;
@@ -336,7 +354,7 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
     );
 
     // Compute visible routes once so we can render lines and vehicles consistently
-    const visibleRoutes = uniqueRoutes.filter((route: any) => {
+    const visibleRoutes = useMemo(() => uniqueRoutes.filter((route: any) => {
         if (highlightedRouteId) {
             const id =
                 route.properties?.route_id ||
@@ -350,7 +368,7 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
         if (mode === "trolleybus") return layersVisible.trolleybus;
         if (mode === "ferry") return layersVisible.ferry;
         return true;
-    });
+    }), [uniqueRoutes, highlightedRouteId, layersVisible]);
 
     return (
         <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", zIndex: 0 }}>
@@ -370,7 +388,7 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
             </div>
             <MapContainer
                 center={[46.516, 6.63282]}
-                zoom={13}
+                zoom={zoom}
                 maxZoom={tileLayer.maxZoom || 17}
                 zoomControl={false}
                 style={{ position: "relative", width: "100%", height: "100%" }}
