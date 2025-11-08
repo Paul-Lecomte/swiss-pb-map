@@ -16,7 +16,7 @@ interface StopTime {
 
 interface VehicleProps {
     routeId: string;
-    routeShortName?: string; // <--- new prop for visual label
+    routeShortName?: string;
     coordinates: LatLngTuple[];
     stopTimes: StopTime[];
     color?: string;
@@ -47,9 +47,11 @@ const Vehicle: React.FC<VehicleProps> = ({
                                              isRunning = false,
                                              onClick,
                                          }) => {
+    const markerRef = useRef<L.Marker>(null);
+
+    // Precompute segments, cumulative distances, stop times
     const cache = useMemo(() => {
         const coords = (coordinates || []).map(c => [Number(c[0]), Number(c[1])] as LatLngTuple);
-
         const stopIndices: number[] = [];
         const stopTimesSec: (number | null)[] = [];
 
@@ -105,6 +107,7 @@ const Vehicle: React.FC<VehicleProps> = ({
             return null;
         }
 
+        // find active segment
         let seg: typeof c.segments[0] | null = null;
         for (const s of c.segments) {
             if (secondsNow >= s.startSec && secondsNow <= s.endSec) { seg = s; break; }
@@ -115,6 +118,7 @@ const Vehicle: React.FC<VehicleProps> = ({
             const last = c.segments[c.segments.length - 1];
             if (secondsNow < first.startSec) return c.coords[first.startIdx];
             if (secondsNow > last.endSec) return c.coords[last.endIdx];
+            // fallback: closest segment
             let best = c.segments[0];
             let bestDist = Math.abs(secondsNow - best.endSec);
             for (const s of c.segments) {
@@ -141,66 +145,70 @@ const Vehicle: React.FC<VehicleProps> = ({
         return [a[0] + (b[0] - a[0]) * localFrac, a[1] + (b[1] - a[1]) * localFrac];
     };
 
-    const now = new Date();
-    const secondsNow = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
-    const initialPos = computePositionForSeconds(secondsNow);
-
-    const [position, setPosition] = useState<LatLngTuple | null>(initialPos);
-    const rafRef = useRef<number | null>(null);
+    const [position, setPosition] = useState<LatLngTuple | null>(() => {
+        const now = new Date();
+        const secondsNow = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds() + now.getMilliseconds() / 1000;
+        return computePositionForSeconds(secondsNow);
+    });
 
     useEffect(() => {
-        const tick = () => {
-            const now = new Date();
-            const secondsNow = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+        let lastTime = performance.now();
+
+        const animate = () => {
+            const now = performance.now();
+            const deltaMs = now - lastTime;
+            lastTime = now;
+
+            const date = new Date();
+            const secondsNow = date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds() + date.getMilliseconds() / 1000;
             const p = computePositionForSeconds(secondsNow);
-            if (p) setPosition(p);
+
+            if (p && markerRef.current) {
+                markerRef.current.setLatLng(p);
+            } else if (p) {
+                setPosition(p);
+            }
+
+            requestAnimationFrame(animate);
         };
 
-        const loop = () => {
-            tick();
-            rafRef.current = requestAnimationFrame(loop);
-        };
+        const rafId = requestAnimationFrame(animate);
+        return () => cancelAnimationFrame(rafId);
+    }, [cache]);
 
-        rafRef.current = requestAnimationFrame(loop);
-
-        return () => {
-            if (rafRef.current) cancelAnimationFrame(rafRef.current);
-            rafRef.current = null;
-        };
-    }, [cache, stopTimes]);
-
-    if (!position) return null;
-
-    // Create DivIcon with Leaflet
+    // DivIcon for the marker
     const icon = new L.DivIcon({
         html: `<div style="
-        width: ${isRunning ? 26 : 22}px;
-        height: ${isRunning ? 26 : 22}px;
-        background-color: white;
-        color: ${color};
-        font-size: ${isRunning ? 13 : 11}px;
-        font-weight: bold;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 50%;
-        border: 2px solid ${color};
-        box-shadow: 0 0 3px rgba(0,0,0,0.3);
-    ">${routeShortName || ""}</div>`,
+            width: ${isRunning ? 26 : 22}px;
+            height: ${isRunning ? 26 : 22}px;
+            background-color: white;
+            color: ${color};
+            font-size: ${isRunning ? 13 : 11}px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            border: 2px solid ${color};
+            box-shadow: 0 0 3px rgba(0,0,0,0.3);
+        ">${routeShortName || ""}</div>`,
         className: "",
         iconSize: [isRunning ? 26 : 22, isRunning ? 26 : 22],
         iconAnchor: [isRunning ? 13 : 11, isRunning ? 13 : 11],
     });
 
-    return <Marker
-        position={position as LatLngTuple}
-        icon={icon}
-        eventHandlers={{
-            click: () => {
-                if (onClick) onClick();
-            },
-        }}
-    />
+    if (!position && coordinates && coordinates.length > 0) {
+        return <Marker ref={markerRef} position={coordinates[0]} icon={icon} eventHandlers={{ click: onClick ? () => onClick() : undefined }} />;
+    }
+
+    return (
+        <Marker
+            ref={markerRef}
+            position={position as LatLngTuple}
+            icon={icon}
+            eventHandlers={{ click: onClick ? () => onClick() : undefined }}
+        />
+    );
 };
 
 export default Vehicle;
