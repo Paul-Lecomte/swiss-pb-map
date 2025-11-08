@@ -403,7 +403,7 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
                         );
                     })}
 
-                {/* Render vehicles for visible routes that have at least two coordinates and stop times */}
+                {/* Render vehicles for visible routes */}
                 {visibleRoutes.map((route: any) => {
                     const id =
                         route.properties?.route_id ||
@@ -421,32 +421,41 @@ const MapView  = ({ onHamburger }: { onHamburger: () => void }) => {
                         .filter(Boolean) as [number, number][];
 
                     const stops = route.properties?.stops || [];
-                    const stopTimesForVehicle = stops.map((s: any) => ({
-                        stop_id: s.stop_id,
-                        stop_lat: s.stop_lat,
-                        stop_lon: s.stop_lon,
-                        arrival_time: s.stop_times?.[0]?.arrival_time,
-                        departure_time: s.stop_times?.[0]?.departure_time,
-                        stop_sequence: s.stop_sequence,
-                    }));
 
-                    const validStopTimesCount = stopTimesForVehicle.filter(
-                        (st: any) => st.arrival_time || st.departure_time
-                    ).length;
-                    if (validStopTimesCount < 2) return null;
+                    // For each departure along this route, render a vehicle
+                    // Assume stops[i].stop_times contains multiple departures per vehicle
+                    const vehicleDepartures = stops[0]?.stop_times || []; // first stop as anchor
 
-                    return (
-                        <Vehicle
-                            key={`veh-${id}`}
-                            routeId={id}
-                            routeShortName={route.properties?.route_short_name}
-                            coordinates={positions}
-                            stopTimes={stopTimesForVehicle}
-                            color={route.properties?.route_color || "#264653"}
-                            isRunning={true}
-                            onClick={() => handleRouteClick(route)} // ✅ click = open RouteInfoPanel
-                        />
-                    );
+                    return vehicleDepartures.map((departure: any, idx: number) => {
+                        // Gather stopTimes for this vehicle
+                        const stopTimesForVehicle = stops.map((s: any) => ({
+                            stop_id: s.stop_id,
+                            stop_lat: s.stop_lat,
+                            stop_lon: s.stop_lon,
+                            arrival_time: s.stop_times?.[idx]?.arrival_time,
+                            departure_time: s.stop_times?.[idx]?.departure_time,
+                            stop_sequence: s.stop_sequence,
+                        }));
+
+                        // Skip vehicles with insufficient stopTimes
+                        const validStopTimesCount = stopTimesForVehicle.filter(
+                            (st: any) => st.arrival_time || st.departure_time
+                        ).length;
+                        if (validStopTimesCount < 2) return null;
+
+                        return (
+                            <Vehicle
+                                key={`veh-${id}-${idx}`}
+                                routeId={id}
+                                routeShortName={route.properties?.route_short_name}
+                                coordinates={positions}
+                                stopTimes={stopTimesForVehicle}
+                                color={route.properties?.route_color || "#264653"}
+                                isRunning={true}
+                                onClick={() => handleRouteClick(route)}
+                            />
+                        );
+                    });
                 })}
 
                 {selectedRoute && (
