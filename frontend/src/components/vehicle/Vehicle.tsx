@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useRef, useState, useMemo } from "react";
 import { Marker } from "react-leaflet";
-import L from "leaflet"; // <- import Leaflet for DivIcon
+import L from "leaflet";
 
 type LatLngTuple = [number, number];
 
@@ -24,7 +24,6 @@ interface VehicleProps {
     onClick?: () => void;
 }
 
-// Parse "HH:MM:SS" possibly with hours > 24 into seconds since midnight
 const parseGtfsTime = (s?: string): number | null => {
     if (!s) return null;
     const parts = s.split(":").map(p => parseInt(p, 10));
@@ -49,7 +48,6 @@ const Vehicle: React.FC<VehicleProps> = ({
                                          }) => {
     const markerRef = useRef<L.Marker>(null);
 
-    // Precompute segments, cumulative distances, stop times
     const cache = useMemo(() => {
         const coords = (coordinates || []).map(c => [Number(c[0]), Number(c[1])] as LatLngTuple);
         const stopIndices: number[] = [];
@@ -107,7 +105,6 @@ const Vehicle: React.FC<VehicleProps> = ({
             return null;
         }
 
-        // find active segment
         let seg: typeof c.segments[0] | null = null;
         for (const s of c.segments) {
             if (secondsNow >= s.startSec && secondsNow <= s.endSec) { seg = s; break; }
@@ -118,7 +115,6 @@ const Vehicle: React.FC<VehicleProps> = ({
             const last = c.segments[c.segments.length - 1];
             if (secondsNow < first.startSec) return c.coords[first.startIdx];
             if (secondsNow > last.endSec) return c.coords[last.endIdx];
-            // fallback: closest segment
             let best = c.segments[0];
             let bestDist = Math.abs(secondsNow - best.endSec);
             for (const s of c.segments) {
@@ -152,38 +148,35 @@ const Vehicle: React.FC<VehicleProps> = ({
     });
 
     useEffect(() => {
-        let lastTime = performance.now();
-
         const animate = () => {
-            const now = performance.now();
-            const deltaMs = now - lastTime;
-            lastTime = now;
-
             const date = new Date();
             const secondsNow = date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds() + date.getMilliseconds() / 1000;
             const p = computePositionForSeconds(secondsNow);
-
-            if (p && markerRef.current) {
-                markerRef.current.setLatLng(p);
-            } else if (p) {
-                setPosition(p);
-            }
-
+            if (p && markerRef.current) markerRef.current.setLatLng(p);
+            else if (p) setPosition(p);
             requestAnimationFrame(animate);
         };
-
         const rafId = requestAnimationFrame(animate);
         return () => cancelAnimationFrame(rafId);
     }, [cache]);
 
-    // DivIcon for the marker
+    // dynamically compute font size based on text length
+    const computeFontSize = (text: string, diameter: number) => {
+        const maxFont = diameter / 2; // max font is half the diameter
+        const size = Math.min(maxFont, diameter / Math.max(text.length, 1));
+        return size;
+    };
+
+    const diameter = isRunning ? 26 : 22;
+    const fontSize = routeShortName ? computeFontSize(routeShortName, diameter) : 12;
+
     const icon = new L.DivIcon({
         html: `<div style="
-            width: ${isRunning ? 26 : 22}px;
-            height: ${isRunning ? 26 : 22}px;
+            width: ${diameter}px;
+            height: ${diameter}px;
             background-color: white;
             color: ${color};
-            font-size: ${isRunning ? 13 : 11}px;
+            font-size: ${fontSize}px;
             font-weight: bold;
             display: flex;
             align-items: center;
@@ -191,10 +184,13 @@ const Vehicle: React.FC<VehicleProps> = ({
             border-radius: 50%;
             border: 2px solid ${color};
             box-shadow: 0 0 3px rgba(0,0,0,0.3);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         ">${routeShortName || ""}</div>`,
         className: "",
-        iconSize: [isRunning ? 26 : 22, isRunning ? 26 : 22],
-        iconAnchor: [isRunning ? 13 : 11, isRunning ? 13 : 11],
+        iconSize: [diameter, diameter],
+        iconAnchor: [diameter / 2, diameter / 2],
     });
 
     if (!position && coordinates && coordinates.length > 0) {
