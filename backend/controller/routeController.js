@@ -1,4 +1,3 @@
-// TODO OPTIMIZE: This code fetches all stop_times for all trips of the routes in the bbox, which can be a lot of data. Consider optimizing by pre-aggregating active trips or using more selective queries.
 const asyncHandler = require('express-async-handler');
 const { DateTime } = require('luxon');
 const ProcessedRoute = require('../model/processedRoutesModel');
