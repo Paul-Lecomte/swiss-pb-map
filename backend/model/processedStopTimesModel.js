@@ -10,11 +10,11 @@ const stopTimeSchema = new mongoose.Schema({
 const processedStopTimesSchema = new mongoose.Schema({
     trip_id: { type: String, index: true },
     route_id: String,
-    direction_id: Number,
+    service_id: String,
+    direction_id: { type: Number, enum: [0, 1], default: 0 },
     stop_times: [stopTimeSchema],
     route_start_time: String,
     route_stop_time: String,
-    service_id: String,
     calendar: {
         monday: Number,
         tuesday: Number,
