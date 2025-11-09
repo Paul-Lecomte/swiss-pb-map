@@ -298,25 +298,36 @@ async function populateProcessedStopTimes() {
     const trips = await parseCSV('trips.txt', null, 'Trip', { saveToDB: false });
     console.log(`✅ Loaded ${trips.length} trips from trips.txt`);
 
-    // Build trip map with route_id and service_id
-    const tripMap = new Map(trips.map(t => [t.trip_id, { route_id: t.route_id, service_id: t.service_id }]));
+    // Build trip map with route_id, service_id, and direction_id 👇
+    const tripMap = new Map(
+        trips.map(t => [
+            t.trip_id,
+            {
+                route_id: t.route_id,
+                service_id: t.service_id,
+                direction_id: t.direction_id !== undefined ? parseInt(t.direction_id) : 0
+            }
+        ])
+    );
 
     // Load calendar.txt
     const calendars = await parseCSV('calendar.txt', null, 'Calendar', { saveToDB: false });
-    const calendarMap = new Map(calendars.map(c => [
-        c.service_id,
-        {
-            monday: parseInt(c.monday),
-            tuesday: parseInt(c.tuesday),
-            wednesday: parseInt(c.wednesday),
-            thursday: parseInt(c.thursday),
-            friday: parseInt(c.friday),
-            saturday: parseInt(c.saturday),
-            sunday: parseInt(c.sunday),
-            start_date: c.start_date,
-            end_date: c.end_date
-        }
-    ]));
+    const calendarMap = new Map(
+        calendars.map(c => [
+            c.service_id,
+            {
+                monday: parseInt(c.monday),
+                tuesday: parseInt(c.tuesday),
+                wednesday: parseInt(c.wednesday),
+                thursday: parseInt(c.thursday),
+                friday: parseInt(c.friday),
+                saturday: parseInt(c.saturday),
+                sunday: parseInt(c.sunday),
+                start_date: c.start_date,
+                end_date: c.end_date
+            }
+        ])
+    );
 
     // Load calendar_dates.txt
     const calendarDates = await parseCSV('calendar_dates.txt', null, 'CalendarDate', { saveToDB: false });
@@ -344,6 +355,7 @@ async function populateProcessedStopTimes() {
                         trip_id: tripId,
                         route_id: tripInfo.route_id,
                         service_id: tripInfo.service_id,
+                        direction_id: tripInfo.direction_id, // 👈 add this here
                         stop_times: [],
                     });
                 }
@@ -360,15 +372,12 @@ async function populateProcessedStopTimes() {
                     console.log(`Parsed ${map.size} trips. Sorting and inserting...`);
 
                     const docs = Array.from(map.values()).map(doc => {
-                        // sort stop_times
                         const stop_times = doc.stop_times.sort((a, b) => a.stop_sequence - b.stop_sequence);
 
-                        // compute start & stop time
                         const times = stop_times.map(st => st.arrival_time || st.departure_time).filter(Boolean);
                         const route_start_time = times.length ? times.reduce((a, b) => (a < b ? a : b)) : null;
                         const route_stop_time = times.length ? times.reduce((a, b) => (a > b ? a : b)) : null;
 
-                        // enrich with calendar + calendar dates
                         const calendar = doc.service_id ? calendarMap.get(doc.service_id) || null : null;
                         const calendar_dates = doc.service_id ? calendarDateMap.get(doc.service_id) || [] : [];
 
@@ -384,10 +393,7 @@ async function populateProcessedStopTimes() {
 
                     const batchSize = 5000;
                     for (let i = 0; i < docs.length; i += batchSize) {
-                        await ProcessedStopTimes.insertMany(
-                            docs.slice(i, i + batchSize),
-                            { ordered: false }
-                        );
+                        await ProcessedStopTimes.insertMany(docs.slice(i, i + batchSize), { ordered: false });
                         console.log(`Inserted ${Math.min(i + batchSize, docs.length)} / ${docs.length}`);
                     }
 
@@ -663,10 +669,6 @@ async function loadTripShapeMap() {
     });
 }
 
-
-// -------------------------
-// File-based ProcessedRoutes (memory efficient)
-// -------------------------
 
 // -------------------------
 // File-based ProcessedRoutes (memory efficient)
