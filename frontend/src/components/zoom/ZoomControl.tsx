@@ -1,27 +1,26 @@
 "use client";
 
 import L from "leaflet";
-import { useEffect, useState } from "react";
 import { createControlComponent } from "@react-leaflet/core";
 import "./ZoomControl.css";
 
 const ZoomControlLeaflet = L.Control.extend({
   options: {
-    position: "topright", // comme les contrôles natifs
+    position: "topright",
   },
 
   onAdd: function (map: any) {
     const container = L.DomUtil.create("div", "zoom-control");
 
-    // Empêche la map de bouger quand on clique sur le contrôle
+    // Prevent map from moving when clicking on the control
     L.DomEvent.disableClickPropagation(container);
 
-    // Bouton +
+    // Zoom-in button
     const zoomInBtn = L.DomUtil.create("button", "", container);
     zoomInBtn.innerHTML = "+";
     zoomInBtn.onclick = () => map.zoomIn();
 
-    // Slider
+    // Zoom slider
     const slider = L.DomUtil.create("input", "zoom-slider", container) as HTMLInputElement;
     slider.type = "range";
     slider.min = map.getMinZoom().toString();
@@ -29,26 +28,51 @@ const ZoomControlLeaflet = L.Control.extend({
     slider.value = map.getZoom().toString();
     slider.oninput = (e: any) => map.setZoom(Number(e.target.value));
 
-    // Sync avec le zoom de la map
+    // Keep the slider value synced with the current zoom level
     map.on("zoomend", () => {
       slider.value = map.getZoom().toString();
     });
 
-    // Bouton -
+    // Zoom-out button
     const zoomOutBtn = L.DomUtil.create("button", "", container);
     zoomOutBtn.innerHTML = "−";
     zoomOutBtn.onclick = () => map.zoomOut();
 
-    // Bouton recentrage
+    // Recenter button (user location)
     const centerBtn = L.DomUtil.create("button", "", container);
     centerBtn.innerHTML = "●";
-    centerBtn.onclick = () => map.setView([46.516, 6.63282], 13);
+    centerBtn.title = "Recenter on your location";
+
+    let userCoords: [number, number] | null = null;
+
+    // Try to get user's geolocation
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            userCoords = [pos.coords.latitude, pos.coords.longitude];
+          },
+          (err) => {
+            console.warn("Geolocation error:", err.message);
+          }
+      );
+    }
+
+    // Recenter map on user's position when the button is clicked
+    centerBtn.onclick = () => {
+      if (userCoords) {
+        map.setView(userCoords, 15); // zoom level 15 = close view
+      } else {
+        alert("User location not available");
+      }
+    };
 
     return container;
   },
 });
 
-// Convertit en composant React
-const ZoomControl = createControlComponent((props: any) => new ZoomControlLeaflet(props) as any);
+// Convert to React component
+const ZoomControl = createControlComponent(
+    (props: any) => new ZoomControlLeaflet(props) as any
+);
 
 export default ZoomControl;
