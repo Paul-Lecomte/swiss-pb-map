@@ -298,7 +298,6 @@ async function populateProcessedStopTimes() {
     const trips = await parseCSV('trips.txt', null, 'Trip', { saveToDB: false });
     console.log(`✅ Loaded ${trips.length} trips from trips.txt`);
 
-    // Build trip map with route_id, service_id, and direction_id 👇
     const tripMap = new Map(
         trips.map(t => [
             t.trip_id,
@@ -310,7 +309,6 @@ async function populateProcessedStopTimes() {
         ])
     );
 
-    // Load calendar.txt
     const calendars = await parseCSV('calendar.txt', null, 'Calendar', { saveToDB: false });
     const calendarMap = new Map(
         calendars.map(c => [
@@ -328,14 +326,6 @@ async function populateProcessedStopTimes() {
             }
         ])
     );
-
-    // Load calendar_dates.txt
-    const calendarDates = await parseCSV('calendar_dates.txt', null, 'CalendarDate', { saveToDB: false });
-    const calendarDateMap = new Map();
-    for (const cd of calendarDates) {
-        if (!calendarDateMap.has(cd.service_id)) calendarDateMap.set(cd.service_id, []);
-        calendarDateMap.get(cd.service_id).push({ date: cd.date, exception_type: parseInt(cd.exception_type) });
-    }
 
     await ProcessedStopTimes.deleteMany({});
     console.log('Cleared ProcessedStopTimes collection.');
@@ -355,8 +345,8 @@ async function populateProcessedStopTimes() {
                         trip_id: tripId,
                         route_id: tripInfo.route_id,
                         service_id: tripInfo.service_id,
-                        direction_id: tripInfo.direction_id, // 👈 add this here
-                        stop_times: [],
+                        direction_id: tripInfo.direction_id,
+                        stop_times: []
                     });
                 }
 
@@ -364,30 +354,25 @@ async function populateProcessedStopTimes() {
                     stop_id: row.stop_id,
                     arrival_time: row.arrival_time,
                     departure_time: row.departure_time,
-                    stop_sequence: parseInt(row.stop_sequence),
+                    stop_sequence: parseInt(row.stop_sequence)
                 });
             })
             .on('end', async () => {
                 try {
-                    console.log(`Parsed ${map.size} trips. Sorting and inserting...`);
-
                     const docs = Array.from(map.values()).map(doc => {
                         const stop_times = doc.stop_times.sort((a, b) => a.stop_sequence - b.stop_sequence);
-
                         const times = stop_times.map(st => st.arrival_time || st.departure_time).filter(Boolean);
+
                         const route_start_time = times.length ? times.reduce((a, b) => (a < b ? a : b)) : null;
                         const route_stop_time = times.length ? times.reduce((a, b) => (a > b ? a : b)) : null;
-
                         const calendar = doc.service_id ? calendarMap.get(doc.service_id) || null : null;
-                        const calendar_dates = doc.service_id ? calendarDateMap.get(doc.service_id) || [] : [];
 
                         return {
                             ...doc,
                             stop_times,
                             route_start_time,
                             route_stop_time,
-                            calendar,
-                            calendar_dates
+                            calendar
                         };
                     });
 
