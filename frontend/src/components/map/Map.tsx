@@ -141,8 +141,34 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
             }, 650)
         ).current;
 
+        // A timeout to delay the "stop moving" detection
+        const moveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
         useMapEvents({
-            moveend: (e: any) => {
+            move: (e: any) => {
+                // Clear any pending timeout if user keeps moving
+                if (moveTimeout.current) clearTimeout(moveTimeout.current);
+
+                // When user stops for 500ms, then trigger
+                moveTimeout.current = setTimeout(() => {
+                    const map = e.target;
+                    const bounds = map.getBounds();
+                    const bbox = [
+                        bounds.getSouthWest().lng,
+                        bounds.getSouthWest().lat,
+                        bounds.getNorthEast().lng,
+                        bounds.getNorthEast().lat,
+                    ];
+                    const currentZoom = map.getZoom();
+                    const maxZoom = map.getMaxZoom();
+
+                    setZoom(currentZoom);
+                    debouncedLoad(bbox, currentZoom, maxZoom);
+                }, 500);
+            },
+
+            zoomend: (e: any) => {
+                // Also trigger when zooming stops
                 const map = e.target;
                 const bounds = map.getBounds();
                 const bbox = [
@@ -153,24 +179,12 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                 ];
                 const currentZoom = map.getZoom();
                 const maxZoom = map.getMaxZoom();
+
                 setZoom(currentZoom);
                 debouncedLoad(bbox, currentZoom, maxZoom);
             },
-            zoomend: (e: any) => {
-                const map = e.target;
-                const bounds = map.getBounds();
-                const bbox = [
-                    bounds.getSouthWest().lng,
-                    bounds.getSouthWest().lat,
-                    bounds.getNorthEast().lng,
-                    bounds.getNorthEast().lat,
-                ];
-                const currentZoom = map.getZoom();
-                const maxZoom = map.getMaxZoom();
-                setZoom(currentZoom);
-                debouncedLoad(bbox, currentZoom, maxZoom);
-            }
         });
+
         return null;
     }
 
