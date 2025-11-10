@@ -35,6 +35,7 @@ const mongoose = require('mongoose');
 const connectDB = require('../config/dbConnection');
 const { buildRouteGeometry } = require('./routingHelper');
 const csv = require('csv-parser');
+const readline = require('readline');
 
 // Import models
 const Agency = require('../model/agencyModel');
@@ -96,6 +97,64 @@ async function getLatestGTFSLink() {
         console.error('Error fetching GTFS link:', error);
         throw error;
     }
+}
+
+async function ensureGTFSDataAvailable() {
+    if (fs.existsSync(STATIC_GTFS_DIR)) {
+        console.log('🟢 Using static GTFS data from', STATIC_GTFS_DIR);
+        if (fs.existsSync(DATA_DIR)) fs.rmSync(DATA_DIR, { recursive: true, force: true });
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+        copyDirectoryRecursiveSync(STATIC_GTFS_DIR, DATA_DIR);
+    } else {
+        console.log('⚠️ Static GTFS not found, downloading latest data...');
+        await downloadGTFS();
+        await extractGTFS();
+    }
+}
+
+// Streaming helper: determine main trip (max stop_times count) per route without loading all trips into memory
+async function findMainTripsForRoutes(fileName, countsMap) {
+    const filePath = path.join(DATA_DIR, fileName);
+    if (!fs.existsSync(filePath)) return new Map();
+
+    console.log('Selecting main trip per route (streaming trips.txt)...');
+    return new Promise((resolve, reject) => {
+        const bestByRoute = new Map(); // route_id -> {trip_id, count}
+
+        const parser = parse({
+            columns: (header) => header.map(col => col.trim().toLowerCase()),
+            relax_column_count: true,
+            skip_empty_lines: true,
+        });
+
+        const rs = fs.createReadStream(filePath);
+        rs.pipe(parser);
+
+        parser.on('data', (row) => {
+            const routeId = row.route_id;
+            const tripId = row.trip_id;
+            if (!routeId || !tripId) return;
+            const c = countsMap.get(tripId) || 0;
+            const cur = bestByRoute.get(routeId);
+            if (!cur || c > cur.count) {
+                bestByRoute.set(routeId, { trip_id: tripId, count: c });
+            }
+        });
+
+        parser.on('end', () => {
+            const result = new Map();
+            for (const [routeId, info] of bestByRoute) {
+                if (info && info.trip_id) result.set(routeId, info.trip_id);
+            }
+            console.log(`Main trips selected for ${result.size} routes`);
+            resolve(result);
+        });
+
+        parser.on('error', (err) => {
+            console.error('Error streaming trips.txt:', err);
+            reject(err);
+        });
+    });
 }
 
 async function downloadGTFS() {
@@ -803,8 +862,7 @@ async function populateProcessedRoutesFromFiles() {
 async function updateGTFSData() {
     try {
         await connectDB();
-        await downloadGTFS();
-        await extractGTFS();
+        await ensureGTFSDataAvailable();
 
         const filesToParse = {
             'agency.txt': { model: Agency, name: 'Agency' },
@@ -856,8 +914,7 @@ async function main() {
 
     if (args.includes('--base')) {
         console.log('Updating only base GTFS collections (excluding ProcessedStops/ProcessedRoute)...');
-        await downloadGTFS();
-        await extractGTFS();
+        await ensureGTFSDataAvailable();
 
         const baseFiles = [
             { file: 'agency.txt', model: Agency, name: 'Agency' },
@@ -883,21 +940,17 @@ async function main() {
     }
 
     if (args.includes('--processedstoptimes')) {
-        await downloadGTFS();
-        await extractGTFS();
+        await ensureGTFSDataAvailable();
         await populateProcessedStopTimes();
     }
 
     if (args.includes('--stops')) {
-        await downloadGTFS();
-        await extractGTFS();
+        await ensureGTFSDataAvailable();
         await parseCSV('stops.txt', Stop, 'Stop');
     }
 
     if (args.includes('--processedstops')) {
-        // current behavior: reload underlying collections then build ProcessedStops (DB-based)
-        await downloadGTFS();
-        await extractGTFS();
+        await ensureGTFSDataAvailable();
 
         await parseCSV('stops.txt', Stop, 'Stop');
         await parseCSV('stop_times.txt', StopTime, 'Stop Time');
@@ -908,24 +961,12 @@ async function main() {
     }
 
     if (args.includes('--processedroutes')) {
-        // file-based, memory-efficient pipeline that does NOT write stops/trips/stop_times/routes to DB
-        // Prefer static GTFS folder if present to avoid network download
-        if (fs.existsSync(STATIC_GTFS_DIR)) {
-            console.log('Using static GTFS data from', STATIC_GTFS_DIR);
-            // ensure DATA_DIR is clean
-            if (fs.existsSync(DATA_DIR)) fs.rmSync(DATA_DIR, { recursive: true, force: true });
-            fs.mkdirSync(DATA_DIR, { recursive: true });
-            copyDirectoryRecursiveSync(STATIC_GTFS_DIR, DATA_DIR);
-        } else {
-            // fallback to downloading latest GTFS
-            await downloadGTFS();
-            await extractGTFS();
-        }
-
+        await ensureGTFSDataAvailable();
         await populateProcessedRoutesFromFiles();
     }
 
     if (args.length === 0) {
+        await ensureGTFSDataAvailable();
         await updateGTFSData();
     }
 
@@ -937,50 +978,6 @@ main().catch(err => {
     console.error('Error:', err);
     mongoose.connection.close();
     process.exit(1);
+
+
 });
-
-// Streaming helper: determine main trip (max stop_times count) per route without loading all trips into memory
-async function findMainTripsForRoutes(fileName, countsMap) {
-    const filePath = path.join(DATA_DIR, fileName);
-    if (!fs.existsSync(filePath)) return new Map();
-
-    console.log('Selecting main trip per route (streaming trips.txt)...');
-    return new Promise((resolve, reject) => {
-        const bestByRoute = new Map(); // route_id -> {trip_id, count}
-
-        const parser = parse({
-            columns: (header) => header.map(col => col.trim().toLowerCase()),
-            relax_column_count: true,
-            skip_empty_lines: true,
-        });
-
-        const rs = fs.createReadStream(filePath);
-        rs.pipe(parser);
-
-        parser.on('data', (row) => {
-            const routeId = row.route_id;
-            const tripId = row.trip_id;
-            if (!routeId || !tripId) return;
-            const c = countsMap.get(tripId) || 0;
-            const cur = bestByRoute.get(routeId);
-            if (!cur || c > cur.count) {
-                bestByRoute.set(routeId, { trip_id: tripId, count: c });
-            }
-        });
-
-        parser.on('end', () => {
-            const result = new Map();
-            for (const [routeId, info] of bestByRoute) {
-                if (info && info.trip_id) result.set(routeId, info.trip_id);
-            }
-            console.log(`Main trips selected for ${result.size} routes`);
-            resolve(result);
-        });
-
-        parser.on('error', (err) => {
-            console.error('Error streaming trips.txt:', err);
-            reject(err);
-        });
-    });
-}
-
