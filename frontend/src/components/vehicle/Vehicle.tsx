@@ -24,13 +24,13 @@ interface VehicleProps {
     onClick?: () => void;
 }
 
-const parseGtfsTime = (s?: string): number | null => {
-    if (!s) return null;
+const parseGtfsTime = (s?: unknown): number | null => {
+    if (typeof s !== "string") return null; // ensure it's a string
+
     const parts = s.split(":").map(p => parseInt(p, 10));
     if (parts.length < 2 || parts.some(isNaN)) return null;
-    const hours = parts[0] || 0;
-    const mins = parts[1] || 0;
-    const secs = parts[2] || 0;
+
+    const [hours = 0, mins = 0, secs = 0] = parts;
     return hours * 3600 + mins * 60 + secs;
 };
 
