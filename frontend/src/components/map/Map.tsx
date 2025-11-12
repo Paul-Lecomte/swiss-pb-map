@@ -6,12 +6,13 @@ import "leaflet/dist/leaflet.css";
 import ZoomControl from "../zoom/ZoomControl";
 import { fetchStopsInBbox } from "../../services/StopsApiCalls";
 import MapLayerSwitcher, { layers } from "../maplayerswitcher/MapLayerSwitcher";
-import { fetchRoutesInBbox } from "../../services/RouteApiCalls";
+import { streamRoutesInBbox } from "../../services/RouteApiCalls";
 import RouteLine from "@/components//route_line/RouteLine";
 import Search from "@/components/search/Search";
 import RouteInfoPanel from "@/components/routeinfopanel/RouteInfoPanel";
 import Vehicle from "@/components/vehicle/Vehicle";
 import { LayerState } from "../layer_option/LayerOption";
+import StreamProgress from "@/components/progress/StreamProgress";
 
 // Layer visibility state type
 type LayerKeys = "railway" | "stations" | "tram" | "bus" | "trolleybus" | "ferry" | "backgroundPois";
@@ -83,39 +84,160 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
     };
 
     const routesCacheRef = useRef<Map<string, { route: any; bboxes: number[][] }>>(new Map());
+    const streamAbortRef = useRef<AbortController | null>(null);
+    const rafScheduledRef = useRef(false);
+    const [streamInfo, setStreamInfo] = useState<{ total?: number; received: number; elapsedMs?: number; loading: boolean }>({ received: 0, loading: false });
 
-    const loadRoutes = async (bbox: number[], zoom: number) => {
+    // Abort ongoing stream on unmount
+    useEffect(() => {
+        return () => {
+            if (streamAbortRef.current) {
+                try { streamAbortRef.current.abort(); } catch {}
+            }
+        };
+    }, []);
+
+    const loadRoutesStreaming = async (bbox: number[], zoom: number) => {
         const bboxKey = bbox.join(",");
 
-        // If every cached route already has this bbox recorded, skip fetch
         const cachedRoutes = Array.from(routesCacheRef.current.values());
         const alreadyCached = cachedRoutes.length > 0 && cachedRoutes.every(c => c.bboxes.some(b => b.join(",") === bboxKey));
         if (alreadyCached) return;
 
-        const data = await fetchRoutesInBbox(bbox, zoom);
-        const fetched = data.features || [];
+        // Liste des route_ids connus pour minimiser le statique envoyé par le backend
+        const knownIds = Array.from(routesCacheRef.current.keys());
 
-        // Merge with cache and record bbox for each route
-        fetched.forEach((r: any) => {
-            const id = r.properties?.route_id || `${r.properties?.route_short_name}-${r.properties?.route_long_name}`;
-            if (routesCacheRef.current.has(id)) {
-                routesCacheRef.current.get(id)!.bboxes.push(bbox);
-            } else {
-                routesCacheRef.current.set(id, { route: r, bboxes: [bbox] });
-            }
-        });
-
-        // Keep only routes that intersect the expanded bbox (avoid infinite cache)
-        const expandedBbox = expandBbox(bbox, 0.1); // 10% margin
-        for (const [id, cached] of routesCacheRef.current.entries()) {
-            const inBbox = cached.route.geometry?.coordinates?.some(([lng, lat]: [number, number]) =>
-                lng >= expandedBbox[0] && lng <= expandedBbox[2] && lat >= expandedBbox[1] && lat <= expandedBbox[3]
-            );
-            if (!inBbox) routesCacheRef.current.delete(id);
+        if (streamAbortRef.current) {
+            try { streamAbortRef.current.abort(); } catch {}
         }
+        const ac = new AbortController();
+        streamAbortRef.current = ac;
 
-        // Update state from cache
-        setRoutes(Array.from(routesCacheRef.current.values()).map(c => c.route));
+        const expandedBbox = expandBbox(bbox, 0.1);
+
+        const scheduleFlush = () => {
+            if (rafScheduledRef.current) return;
+            rafScheduledRef.current = true;
+            requestAnimationFrame(() => {
+                rafScheduledRef.current = false;
+                setRoutes(Array.from(routesCacheRef.current.values()).map(c => c.route));
+            });
+        };
+
+        try {
+            setStreamInfo({ received: 0, loading: true });
+            await streamRoutesInBbox(
+              bbox,
+              zoom,
+              (feature) => {
+                // Merge with cache: si static_included=false, réutiliser geometry/stops depuis le cache si disponibles
+                const id = feature.properties?.route_id || `${feature.properties?.route_short_name}-${feature.properties?.route_long_name}`;
+                const coords = feature.geometry?.coordinates || [];
+                let intersects = false;
+                if (Array.isArray(coords) && coords.length) {
+                    intersects = coords.some((c: any) => {
+                        const lon = Number(c[0]);
+                        const lat = Number(c[1]);
+                        return Number.isFinite(lat) && Number.isFinite(lon)
+                          && lon >= expandedBbox[0] && lon <= expandedBbox[2]
+                          && lat >= expandedBbox[1] && lat <= expandedBbox[3];
+                    });
+                } else if (routesCacheRef.current.has(id)) {
+                    const cached = routesCacheRef.current.get(id)!.route;
+                    const cc = cached.geometry?.coordinates || [];
+                    intersects = Array.isArray(cc) && cc.some((c: any) => {
+                        const lon = Number(c[0]);
+                        const lat = Number(c[1]);
+                        return Number.isFinite(lat) && Number.isFinite(lon)
+                          && lon >= expandedBbox[0] && lon <= expandedBbox[2]
+                          && lat >= expandedBbox[1] && lat <= expandedBbox[3];
+                    });
+                }
+                if (!intersects) return;
+
+                // Recompose feature si statique manquant
+                if (!feature.geometry && routesCacheRef.current.has(id)) {
+                    const cached = routesCacheRef.current.get(id)!.route;
+                    feature.geometry = cached.geometry;
+                    if (!feature.properties?.stops) feature.properties.stops = cached.properties?.stops;
+                }
+
+                // Convertit trip_schedules -> stop_times par stop (pour compat Vehicle)
+                if (feature.properties && feature.properties.trip_schedules && feature.properties.stops) {
+                    const schedules = feature.properties.trip_schedules as Array<{ trip_id: string; times: any[] }>;
+                    const stopsArr = feature.properties.stops as any[];
+                    const stopTimesByStop = stopsArr.map((s: any, stopIdx: number) => {
+                        const arr: any[] = [];
+                        for (let v = 0; v < schedules.length; v++) {
+                            const pair = schedules[v].times?.[stopIdx];
+                            if (!pair) { arr.push({}); continue; }
+                            if (Array.isArray(pair)) {
+                                // compact mode [arrSec, depSec] => reconstruit HH:MM:SS pour compat
+                                const toTime = (sec: number | null) => {
+                                    if (sec == null || !isFinite(sec)) return undefined;
+                                    const h = Math.floor(sec / 3600);
+                                    const m = Math.floor((sec % 3600) / 60);
+                                    const s = Math.floor(sec % 60);
+                                    const pad = (n: number) => String(n).padStart(2, '0');
+                                    return `${pad(h)}:${pad(m)}:${pad(s)}`;
+                                };
+                                arr.push({
+                                    arrival_time: toTime(pair[0] ?? null),
+                                    departure_time: toTime(pair[1] ?? null)
+                                });
+                            } else {
+                                // non-compact: déjà sous forme {arrival_time, departure_time}
+                                arr.push({ arrival_time: pair.arrival_time, departure_time: pair.departure_time });
+                            }
+                        }
+                        return arr;
+                    });
+                    // Injecte stop_times reconstruits dans stops
+                    for (let i = 0; i < stopsArr.length; i++) {
+                        (stopsArr[i] as any).stop_times = stopTimesByStop[i] || [];
+                    }
+                    // Nettoie schedule pour réduire la mémoire client
+                    delete feature.properties.trip_schedules;
+                }
+
+                if (routesCacheRef.current.has(id)) {
+                    const entry = routesCacheRef.current.get(id)!;
+                    entry.route = feature.geometry ? feature : { ...feature, geometry: entry.route.geometry };
+                    if (!entry.bboxes.some(b => b.join(",") === bboxKey)) entry.bboxes.push(bbox);
+                } else {
+                    routesCacheRef.current.set(id, { route: feature, bboxes: [bbox] });
+                }
+                scheduleFlush();
+                setStreamInfo(prev => ({ ...prev, received: prev.received + 1 }));
+              },
+              {
+                signal: ac.signal,
+                knownIds,
+                includeStatic: true,
+                compactTimes: true,
+                maxTrips: 24,
+                decimals: 5,
+                concurrency: 10,
+                onMeta: (m) => setStreamInfo(prev => ({ ...prev, total: m.totalRoutes })),
+                onEnd: (e) => setStreamInfo(prev => ({ ...prev, loading: false, elapsedMs: e.elapsedMs }))
+              }
+            );
+
+            for (const [id, cached] of routesCacheRef.current.entries()) {
+                const inBbox = cached.route.geometry?.coordinates?.some(([lng, lat]: [number, number]) =>
+                    lng >= expandedBbox[0] && lng <= expandedBbox[2] && lat >= expandedBbox[1] && lat <= expandedBbox[3]
+                );
+                if (!inBbox) routesCacheRef.current.delete(id);
+            }
+            setRoutes(Array.from(routesCacheRef.current.values()).map(c => c.route));
+        } catch (e: any) {
+            if (e?.name === 'AbortError' || e?.message?.includes('aborted')) {
+                // silently ignore
+            } else {
+                console.error('[Map] streamRoutesInBbox failed', e);
+            }
+            setStreamInfo(prev => ({ ...prev, loading: false }));
+        }
     };
 
     function MapRefBinder() {
@@ -137,7 +259,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
         const debouncedLoad = useRef(
             debounce((bbox: number[], currentZoom: number, maxZoom: number) => {
                 loadStops(bbox, currentZoom, maxZoom);
-                loadRoutes(bbox, currentZoom);
+                loadRoutesStreaming(bbox, currentZoom);
             }, 650)
         ).current;
 
@@ -191,7 +313,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
     useEffect(() => {
         const bbox = [6.5, 46.5, 6.7, 46.6];
         loadStops(bbox, 13, 17);
-        loadRoutes(bbox, 13);
+        loadRoutesStreaming(bbox, 13);
     }, []);
 
     // Handler for "app:stop-select" event
@@ -409,6 +531,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                     setMapReady(true);
                 }}
             >
+                <StreamProgress total={streamInfo.total} received={streamInfo.received} elapsedMs={streamInfo.elapsedMs} loading={streamInfo.loading} />
                 <TileLayer url={tileLayer.url} attribution={tileLayer.attribution} maxZoom={tileLayer.maxZoom} maxNativeZoom={tileLayer.maxZoom} />
 
                 <ZoomControl />
@@ -445,7 +568,12 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                         .filter(Boolean) as [number, number][];
 
                     const stops = route.properties?.stops || [];
-                    const vehicleDepartures = stops[0]?.stop_times || [];
+                    // Si le backend a renvoyé des trip_schedules non convertis (fallback), construire des stopTimes minimalistes
+                    let vehicleDepartures = stops[0]?.stop_times || [];
+                    if ((!vehicleDepartures || vehicleDepartures.length === 0) && Array.isArray(route.properties?.trip_schedules)) {
+                        const schedules = route.properties.trip_schedules as Array<{ trip_id: string; times: any[] }>;
+                        vehicleDepartures = schedules.map(s => ({ arrival_time: s.times?.[0]?.[0], departure_time: s.times?.[0]?.[1] }));
+                    }
 
                     return vehicleDepartures.map((departure: any, idx: number) => {
                         const stopTimesForVehicle = stops.map((s: any) => ({
