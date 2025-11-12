@@ -6,7 +6,7 @@ export default function StreamProgress({ total, received, elapsedMs, loading }: 
   return (
     <div style={{
       position: 'absolute',
-      top: 16,
+      bottom: 16,
       right: 16,
       zIndex: 1100,
       background: 'rgba(0,0,0,0.6)',
