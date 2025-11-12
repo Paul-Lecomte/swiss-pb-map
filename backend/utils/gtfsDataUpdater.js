@@ -353,25 +353,30 @@ async function parseCSV(fileName, model, name, { saveToDB = true } = {}) {
 async function populateProcessedStopTimes() {
     const filePath = path.join(DATA_DIR, 'stop_times.txt');
 
-    console.log('Processing trips.txt (returning in memory)...');
+    console.log('Processing trips.txt (in-memory only)...');
     const trips = await parseCSV('trips.txt', null, 'Trip', { saveToDB: false });
     console.log(`✅ Loaded ${trips.length} trips from trips.txt`);
 
+    // Normalize all trip fields
     const tripMap = new Map(
         trips.map(t => [
-            t.trip_id,
+            t.trip_id.trim(),
             {
-                route_id: t.route_id,
-                service_id: t.service_id,
+                route_id: t.route_id?.trim(),
+                service_id: t.service_id?.trim(),
                 direction_id: t.direction_id !== undefined ? parseInt(t.direction_id) : 0
             }
         ])
     );
 
+    console.log('Processing calendar.txt (in-memory only)...');
     const calendars = await parseCSV('calendar.txt', null, 'Calendar', { saveToDB: false });
+    console.log(`✅ Loaded ${calendars.length} services from calendar.txt`);
+
+    // Normalize calendar keys + values
     const calendarMap = new Map(
         calendars.map(c => [
-            c.service_id,
+            c.service_id.trim(),
             {
                 monday: parseInt(c.monday),
                 tuesday: parseInt(c.tuesday),
@@ -380,22 +385,27 @@ async function populateProcessedStopTimes() {
                 friday: parseInt(c.friday),
                 saturday: parseInt(c.saturday),
                 sunday: parseInt(c.sunday),
-                start_date: c.start_date,
-                end_date: c.end_date
+                start_date: c.start_date?.trim(),
+                end_date: c.end_date?.trim()
             }
         ])
     );
 
+    console.log(`🧭 Built calendar map with ${calendarMap.size} entries`);
+
     await ProcessedStopTimes.deleteMany({});
-    console.log('Cleared ProcessedStopTimes collection.');
+    console.log('🧹 Cleared ProcessedStopTimes collection.');
 
     await new Promise((resolve, reject) => {
         const map = new Map();
 
         fs.createReadStream(filePath)
-            .pipe(csv({ mapHeaders: ({ header }) => header.trim().toLowerCase() }))
+            .pipe(csv({
+                mapHeaders: ({ header }) => header.trim().toLowerCase(),
+                mapValues: ({ value }) => value?.trim()
+            }))
             .on('data', (row) => {
-                const tripId = row.trip_id;
+                const tripId = row.trip_id?.trim();
                 const tripInfo = tripMap.get(tripId);
                 if (!tripId || !tripInfo) return;
 
@@ -409,22 +419,41 @@ async function populateProcessedStopTimes() {
                     });
                 }
 
-                map.get(tripId).stop_times.push({
-                    stop_id: row.stop_id,
-                    arrival_time: row.arrival_time,
-                    departure_time: row.departure_time,
-                    stop_sequence: parseInt(row.stop_sequence)
-                });
+                const stopSequence = parseInt(row.stop_sequence);
+                if (!isNaN(stopSequence)) {
+                    map.get(tripId).stop_times.push({
+                        stop_id: row.stop_id?.trim(),
+                        arrival_time: row.arrival_time,
+                        departure_time: row.departure_time,
+                        stop_sequence: stopSequence
+                    });
+                }
             })
             .on('end', async () => {
                 try {
-                    const docs = Array.from(map.values()).map(doc => {
+                    const allTrips = Array.from(map.values());
+                    console.log(`Processed ${allTrips.length} unique trips from stop_times.txt`);
+
+                    const docs = allTrips.map(doc => {
                         const stop_times = doc.stop_times.sort((a, b) => a.stop_sequence - b.stop_sequence);
                         const times = stop_times.map(st => st.arrival_time || st.departure_time).filter(Boolean);
 
-                        const route_start_time = times.length ? times.reduce((a, b) => (a < b ? a : b)) : null;
-                        const route_stop_time = times.length ? times.reduce((a, b) => (a > b ? a : b)) : null;
-                        const calendar = doc.service_id ? calendarMap.get(doc.service_id) || null : null;
+                        const route_start_time = times.length
+                            ? times.reduce((a, b) => (a < b ? a : b))
+                            : null;
+
+                        const route_stop_time = times.length
+                            ? times.reduce((a, b) => (a > b ? a : b))
+                            : null;
+
+                        // Retrieve normalized calendar
+                        const calendar = doc.service_id
+                            ? calendarMap.get(doc.service_id.trim()) || null
+                            : null;
+
+                        if (!calendar) {
+                            console.warn(`[WARN] No calendar found for service_id=${doc.service_id} (trip_id=${doc.trip_id})`);
+                        }
 
                         return {
                             ...doc,
@@ -435,15 +464,17 @@ async function populateProcessedStopTimes() {
                         };
                     });
 
+                    // Batch insert for performance
                     const batchSize = 5000;
                     for (let i = 0; i < docs.length; i += batchSize) {
                         await ProcessedStopTimes.insertMany(docs.slice(i, i + batchSize), { ordered: false });
                         console.log(`Inserted ${Math.min(i + batchSize, docs.length)} / ${docs.length}`);
                     }
 
-                    console.log(`✅ Done. Inserted ${docs.length} processed stop time documents.`);
+                    console.log(`Done. Inserted ${docs.length} processed stop time documents.`);
                     resolve();
                 } catch (err) {
+                    console.error('Error during insert:', err);
                     reject(err);
                 }
             })
