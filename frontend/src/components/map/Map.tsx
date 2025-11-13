@@ -88,7 +88,14 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
     const rafScheduledRef = useRef(false);
     const [streamInfo, setStreamInfo] = useState<{ total?: number; received: number; elapsedMs?: number; loading: boolean }>({ received: 0, loading: false });
 
-    // Abort ongoing stream on unmount
+    // Maintain last bbox route ids to compute diffs and avoid re-rendering same features
+    const lastBboxRoutesRef = useRef<Set<string>>(new Set());
+
+    // Streaming concurrency/queueing control
+    const isStreamingRef = useRef(false);
+    const pendingRequestRef = useRef<{ bbox: number[]; zoom: number } | null>(null);
+
+    // Abort ongoing stream on unmount only
     useEffect(() => {
         return () => {
             if (streamAbortRef.current) {
@@ -96,6 +103,23 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
             }
         };
     }, []);
+
+    const requestRoutes = async (bbox: number[], zoom: number) => {
+        if (isStreamingRef.current) {
+            // Queue latest request; it will run right after the current finishes
+            pendingRequestRef.current = { bbox, zoom };
+            return;
+        }
+        isStreamingRef.current = true;
+        await loadRoutesStreaming(bbox, zoom);
+        isStreamingRef.current = false;
+        // If a new bbox was queued while we were streaming, fire it now (take the latest)
+        const pending = pendingRequestRef.current;
+        pendingRequestRef.current = null;
+        if (pending) {
+            requestRoutes(pending.bbox, pending.zoom);
+        }
+    };
 
     const loadRoutesStreaming = async (bbox: number[], zoom: number) => {
         const bboxKey = bbox.join(",");
@@ -107,9 +131,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
         // Liste des route_ids connus pour minimiser le statique envoyé par le backend
         const knownIds = Array.from(routesCacheRef.current.keys());
 
-        if (streamAbortRef.current) {
-            try { streamAbortRef.current.abort(); } catch {}
-        }
+        // Do not abort current stream on new calls anymore (we queue instead). Keep AbortController for unmount safety.
         const ac = new AbortController();
         streamAbortRef.current = ac;
 
@@ -126,12 +148,18 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
 
         try {
             setStreamInfo({ received: 0, loading: true });
+            const returnedThisCall = new Set<string>();
+
+            // dynamic maxTrips by zoom to reduce vehicles at low zoom
+            const maxTripsByZoom = zoom >= 15 ? 24 : zoom >= 13 ? 12 : 6;
+
             await streamRoutesInBbox(
               bbox,
               zoom,
               (feature) => {
-                // Merge with cache: si static_included=false, réutiliser geometry/stops depuis le cache si disponibles
                 const id = feature.properties?.route_id || `${feature.properties?.route_short_name}-${feature.properties?.route_long_name}`;
+                if (!id) return;
+                returnedThisCall.add(id);
                 const coords = feature.geometry?.coordinates || [];
                 let intersects = false;
                 if (Array.isArray(coords) && coords.length) {
@@ -162,43 +190,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                     if (!feature.properties?.stops) feature.properties.stops = cached.properties?.stops;
                 }
 
-                // Convertit trip_schedules -> stop_times par stop (pour compat Vehicle)
-                if (feature.properties && feature.properties.trip_schedules && feature.properties.stops) {
-                    const schedules = feature.properties.trip_schedules as Array<{ trip_id: string; times: any[] }>;
-                    const stopsArr = feature.properties.stops as any[];
-                    const stopTimesByStop = stopsArr.map((s: any, stopIdx: number) => {
-                        const arr: any[] = [];
-                        for (let v = 0; v < schedules.length; v++) {
-                            const pair = schedules[v].times?.[stopIdx];
-                            if (!pair) { arr.push({}); continue; }
-                            if (Array.isArray(pair)) {
-                                // compact mode [arrSec, depSec] => reconstruit HH:MM:SS pour compat
-                                const toTime = (sec: number | null) => {
-                                    if (sec == null || !isFinite(sec)) return undefined;
-                                    const h = Math.floor(sec / 3600);
-                                    const m = Math.floor((sec % 3600) / 60);
-                                    const s = Math.floor(sec % 60);
-                                    const pad = (n: number) => String(n).padStart(2, '0');
-                                    return `${pad(h)}:${pad(m)}:${pad(s)}`;
-                                };
-                                arr.push({
-                                    arrival_time: toTime(pair[0] ?? null),
-                                    departure_time: toTime(pair[1] ?? null)
-                                });
-                            } else {
-                                // non-compact: déjà sous forme {arrival_time, departure_time}
-                                arr.push({ arrival_time: pair.arrival_time, departure_time: pair.departure_time });
-                            }
-                        }
-                        return arr;
-                    });
-                    // Injecte stop_times reconstruits dans stops
-                    for (let i = 0; i < stopsArr.length; i++) {
-                        (stopsArr[i] as any).stop_times = stopTimesByStop[i] || [];
-                    }
-                    // Nettoie schedule pour réduire la mémoire client
-                    delete feature.properties.trip_schedules;
-                }
+                // Eviter conversion trip_schedules -> stop_times ici pour réduire la charge CPU; on fera au moment du rendu Vehicle/Panel si nécessaire.
 
                 if (routesCacheRef.current.has(id)) {
                     const entry = routesCacheRef.current.get(id)!;
@@ -215,24 +207,35 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                 knownIds,
                 includeStatic: true,
                 compactTimes: true,
-                maxTrips: 24,
+                maxTrips: maxTripsByZoom,
                 decimals: 5,
                 concurrency: 10,
-                onMeta: (m) => setStreamInfo(prev => ({ ...prev, total: m.totalRoutes })),
+                onlyNew: true,
+                onMeta: (m) => setStreamInfo(prev => ({ ...prev, total: m.filteredRoutes ?? m.totalRoutes })),
                 onEnd: (e) => setStreamInfo(prev => ({ ...prev, loading: false, elapsedMs: e.elapsedMs }))
               }
             );
 
+            // Cleanup cache entries that don't intersect the expanded bbox anymore
             for (const [id, cached] of routesCacheRef.current.entries()) {
                 const inBbox = cached.route.geometry?.coordinates?.some(([lng, lat]: [number, number]) =>
                     lng >= expandedBbox[0] && lng <= expandedBbox[2] && lat >= expandedBbox[1] && lat <= expandedBbox[3]
                 );
                 if (!inBbox) routesCacheRef.current.delete(id);
             }
+
+            const prevIds = lastBboxRoutesRef.current;
+            for (const oldId of prevIds) {
+                if (!returnedThisCall.has(oldId)) {
+                    routesCacheRef.current.delete(oldId);
+                }
+            }
+            lastBboxRoutesRef.current = returnedThisCall;
+
             setRoutes(Array.from(routesCacheRef.current.values()).map(c => c.route));
         } catch (e: any) {
             if (e?.name === 'AbortError' || e?.message?.includes('aborted')) {
-                // silently ignore
+                // unmount abort; ignore
             } else {
                 console.error('[Map] streamRoutesInBbox failed', e);
             }
@@ -259,7 +262,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
         const debouncedLoad = useRef(
             debounce((bbox: number[], currentZoom: number, maxZoom: number) => {
                 loadStops(bbox, currentZoom, maxZoom);
-                loadRoutesStreaming(bbox, currentZoom);
+                requestRoutes(bbox, currentZoom);
             }, 650)
         ).current;
 
@@ -313,7 +316,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
     useEffect(() => {
         const bbox = [6.5, 46.5, 6.7, 46.6];
         loadStops(bbox, 13, 17);
-        loadRoutesStreaming(bbox, 13);
+        requestRoutes(bbox, 13);
     }, []);
 
     // Handler for "app:stop-select" event
@@ -546,7 +549,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                             key={id}
                             route={route}
                             color={route.properties?.route_color}
-                            onClick={() => handleRouteClick(route)}
+                            onClick={() => handleRouteClick(routesCacheRef.current.get(id)?.route || route)}
                             highlighted={highlightedRouteId === id}
                         />
                     );
@@ -555,7 +558,8 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                 {/* Vehicles */}
                 {showAllVehicles && visibleRoutes.map((route: any) => {
                     const id = route.properties?.route_id || `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
-                    const coords = route.geometry?.coordinates || [];
+                    const fullRoute = routesCacheRef.current.get(id)?.route || route;
+                    const coords = fullRoute.geometry?.coordinates || [];
                     if (!coords || coords.length < 2) return null;
 
                     const positions = coords
@@ -567,16 +571,14 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                         })
                         .filter(Boolean) as [number, number][];
 
-                    const stops = route.properties?.stops || [];
-                    // Si le backend a renvoyé des trip_schedules non convertis (fallback), construire des stopTimes minimalistes
-                    let vehicleDepartures = stops[0]?.stop_times || [];
-                    if ((!vehicleDepartures || vehicleDepartures.length === 0) && Array.isArray(route.properties?.trip_schedules)) {
-                        const schedules = route.properties.trip_schedules as Array<{ trip_id: string; times: any[] }>;
-                        vehicleDepartures = schedules.map(s => ({ arrival_time: s.times?.[0]?.[0], departure_time: s.times?.[0]?.[1] }));
-                    }
+                    const stops = fullRoute.properties?.stops || [];
 
-                    return vehicleDepartures.map((departure: any, idx: number) => {
-                        const stopTimesForVehicle = stops.map((s: any) => ({
+                    // Determine vehicles from either stop_times at first stop or compact trip_schedules
+                    let vehicleCount = 0;
+                    let getStopTimesForVehicle: (idx: number) => any[] = () => [];
+                    if (stops[0]?.stop_times && Array.isArray(stops[0].stop_times)) {
+                        vehicleCount = stops[0].stop_times.length;
+                        getStopTimesForVehicle = (idx: number) => stops.map((s: any) => ({
                             stop_id: s.stop_id,
                             stop_lat: s.stop_lat,
                             stop_lon: s.stop_lon,
@@ -584,7 +586,32 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                             departure_time: s.stop_times?.[idx]?.departure_time,
                             stop_sequence: s.stop_sequence,
                         }));
+                    } else if (Array.isArray(fullRoute.properties?.trip_schedules)) {
+                        const schedules = fullRoute.properties.trip_schedules as Array<{ trip_id: string; times: any[] }>;
+                        vehicleCount = schedules.length;
+                        const toTime = (sec: number | null) => {
+                            if (sec == null || !isFinite(sec)) return undefined;
+                            const h = Math.floor(sec / 3600);
+                            const m = Math.floor((sec % 3600) / 60);
+                            const s = Math.floor(sec % 60);
+                            const pad = (n: number) => String(n).padStart(2, '0');
+                            return `${pad(h)}:${pad(m)}:${pad(s)}`;
+                        };
+                        getStopTimesForVehicle = (idx: number) => stops.map((s: any, stopIdx: number) => {
+                            const pair = schedules[idx]?.times?.[stopIdx];
+                            return {
+                                stop_id: s.stop_id,
+                                stop_lat: s.stop_lat,
+                                stop_lon: s.stop_lon,
+                                arrival_time: Array.isArray(pair) ? toTime(pair[0] ?? null) : pair?.arrival_time,
+                                departure_time: Array.isArray(pair) ? toTime(pair[1] ?? null) : pair?.departure_time,
+                                stop_sequence: s.stop_sequence,
+                            };
+                        });
+                    }
 
+                    return Array.from({ length: vehicleCount }).map((_, idx: number) => {
+                        const stopTimesForVehicle = getStopTimesForVehicle(idx);
                         const validStopTimesCount = stopTimesForVehicle.filter(
                             (st: any) => st.arrival_time || st.departure_time
                         ).length;
@@ -594,12 +621,12 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                             <Vehicle
                                 key={`veh-${id}-${idx}`}
                                 routeId={id}
-                                routeShortName={route.properties?.route_short_name}
+                                routeShortName={fullRoute.properties?.route_short_name}
                                 coordinates={positions}
                                 stopTimes={stopTimesForVehicle}
-                                color={route.properties?.route_color || "#264653"}
+                                color={fullRoute.properties?.route_color || "#264653"}
                                 isRunning={true}
-                                onClick={() => handleRouteClick(route)}
+                                onClick={() => handleRouteClick(fullRoute)}
                             />
                         );
                     });

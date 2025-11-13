@@ -7,9 +7,14 @@ const stopTimeSchema = new mongoose.Schema({
     stop_sequence: Number
 });
 
+const calendarDateSchema = new mongoose.Schema({
+    date: String,            // format yyyyMMdd
+    exception_type: Number   // 1=service added, 2=service removed
+}, { _id: false });
+
 const processedStopTimesSchema = new mongoose.Schema({
     trip_id: { type: String, index: true },
-    route_id: String,
+    route_id: { type: String, index: true },
     service_id: String,
     direction_id: { type: Number, enum: [0, 1], default: 0 },
     stop_times: [stopTimeSchema],
@@ -25,7 +30,8 @@ const processedStopTimesSchema = new mongoose.Schema({
         sunday: Number,
         start_date: String,
         end_date: String
-    }
+    },
+    calendar_dates: [calendarDateSchema]
 });
 
 module.exports = mongoose.model('ProcessedStopTimes', processedStopTimesSchema);

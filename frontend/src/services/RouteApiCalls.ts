@@ -22,6 +22,7 @@ export async function streamRoutesInBbox(
     maxTrips?: number,
     decimals?: number,
     concurrency?: number,
+    onlyNew?: boolean,
     onMeta?: (meta: any) => void,
     onEnd?: (summary: any) => void,
   }
@@ -37,6 +38,7 @@ export async function streamRoutesInBbox(
   if (opts?.maxTrips != null) params.set('max_trips', String(opts.maxTrips));
   if (opts?.decimals != null) params.set('decimals', String(opts.decimals));
   if (opts?.concurrency != null) params.set('concurrency', String(opts.concurrency));
+  if (opts?.onlyNew != null) params.set('only_new', opts.onlyNew ? '1' : '0');
   const url = `${API_BASE_URL}/routes/routes-in-bbox?${params.toString()}`;
 
   const res = await fetch(url, {
