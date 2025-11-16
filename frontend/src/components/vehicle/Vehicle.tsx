@@ -1,7 +1,7 @@
 "use client";
-import React, { useEffect, useRef, useState, useMemo } from "react";
+import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { Marker } from "react-leaflet";
-import L from "leaflet";
+import L, { Marker as LeafletMarker } from "leaflet";
 
 type LatLngTuple = [number, number];
 
@@ -38,41 +38,61 @@ const sq = (v: number) => v * v;
 const dist2 = (a: LatLngTuple, b: LatLngTuple) => sq(a[0] - b[0]) + sq(a[1] - b[1]);
 
 const Vehicle: React.FC<VehicleProps> = ({
-                                             routeId: _routeId,
+                                             // routeId omis volontairement
                                              routeShortName,
                                              coordinates,
                                              stopTimes,
                                              color = "#FF4136",
-                                             isRunning = false,
+                                             // isRunning omis, on calcule l'état actif localement
                                              onClick,
                                          }) => {
-    const markerRef = useRef<L.Marker>(null);
+    const markerRef = useRef<LeafletMarker | null>(null);
 
     const cache = useMemo(() => {
-        const coords = (coordinates || []).map(c => [Number(c[0]), Number(c[1])] as LatLngTuple);
-        const stopIndices: number[] = [];
+        // Prépare la géométrie et calcule les correspondances stops->indices sur la polyligne
+        let coords = (coordinates || []).map(c => [Number(c[0]), Number(c[1])] as LatLngTuple);
+        const prelimStopIndices: number[] = [];
         const stopTimesSec: (number | null)[] = [];
 
         for (const s of (stopTimes || [])) {
             const lat = Number(s.stop_lat);
             const lon = Number(s.stop_lon);
-            if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-                stopIndices.push(-1);
-            } else {
-                let bestIdx = -1;
-                let bestD = Infinity;
-                for (let i = 0; i < coords.length; i++) {
-                    const d = dist2(coords[i], [lat, lon]);
-                    if (d < bestD) {
-                        bestD = d;
-                        bestIdx = i;
-                    }
-                }
-                stopIndices.push(bestIdx);
-            }
+            // Calcul des temps (premier)
             stopTimesSec.push(parseGtfsTime(s.arrival_time ?? s.departure_time ?? undefined));
+
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+                prelimStopIndices.push(-1);
+                continue;
+            }
+            let bestIdx = -1;
+            let bestD = Infinity;
+            for (let i = 0; i < coords.length; i++) {
+                const d = dist2(coords[i], [lat, lon]);
+                if (d < bestD) {
+                    bestD = d;
+                    bestIdx = i;
+                }
+            }
+            prelimStopIndices.push(bestIdx);
         }
 
+        // Détecte si la géométrie est inversée par rapport à l'ordre des arrêts
+        const firstValidIdx = prelimStopIndices.find(idx => idx >= 0);
+        const lastValidIdx = [...prelimStopIndices].reverse().find(idx => idx >= 0);
+        const isReversedGeom =
+            typeof firstValidIdx === "number" && typeof lastValidIdx === "number" && firstValidIdx > lastValidIdx;
+
+        // Si inversée, renverse les coordonnées et remappe les indices
+        let stopIndices: number[];
+        if (isReversedGeom) {
+            const n = coords.length;
+            coords = [...coords].reverse();
+            stopIndices = prelimStopIndices.map(idx => (idx >= 0 ? (n - 1 - idx) : -1));
+        } else {
+            stopIndices = prelimStopIndices;
+        }
+
+        // Segments entre stops valides et distances cumulées sur la (éventuelle) géométrie inversée
         type Seg = { startIdx: number; endIdx: number; startSec: number; endSec: number };
         const segments: Seg[] = [];
         for (let i = 0; i < stopIndices.length - 1; i++) {
@@ -98,7 +118,7 @@ const Vehicle: React.FC<VehicleProps> = ({
         return { coords, stopIndices, stopTimesSec, segments, cumDist };
     }, [coordinates, stopTimes]);
 
-    const computePositionForSeconds = (secondsNow: number): LatLngTuple | null => {
+    const computePositionForSeconds = useCallback((secondsNow: number): LatLngTuple | null => {
         const c = cache;
         if (!c || !c.segments || c.segments.length === 0) {
             if (c.coords && c.coords.length) return c.coords[0];
@@ -139,18 +159,35 @@ const Vehicle: React.FC<VehicleProps> = ({
         const a = c.coords[i];
         const b = c.coords[i + 1] ?? a;
         return [a[0] + (b[0] - a[0]) * localFrac, a[1] + (b[1] - a[1]) * localFrac];
+    }, [cache]);
+
+    // --- bornes horaires (premier et dernier temps non nuls)
+    const firstNonNull = cache.stopTimesSec.find(t => t != null) ?? null;
+    const lastNonNull = [...cache.stopTimesSec].reverse().find(t => t != null) ?? null;
+
+    // Détermine le nowSec effectif en gérant le wrap autour de minuit pour faire progresser correctement le véhicule
+    const getEffectiveNowSec = (d: Date) => {
+        const base = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
+        if (firstNonNull !== null && lastNonNull !== null) {
+            for (let k = -1; k <= 1; k++) {
+                const shifted = base + k * 86400;
+                if (shifted >= firstNonNull && shifted <= lastNonNull) return shifted;
+            }
+        }
+        return base;
     };
 
+    // Position initiale avec gestion du wrap
     const [position, setPosition] = useState<LatLngTuple | null>(() => {
         const now = new Date();
-        const secondsNow = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds() + now.getMilliseconds() / 1000;
+        const secondsNow = getEffectiveNowSec(now);
         return computePositionForSeconds(secondsNow);
     });
 
     useEffect(() => {
         const animate = () => {
             const date = new Date();
-            const secondsNow = date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds() + date.getMilliseconds() / 1000;
+            const secondsNow = getEffectiveNowSec(date);
             const p = computePositionForSeconds(secondsNow);
             if (p && markerRef.current) markerRef.current.setLatLng(p);
             else if (p) setPosition(p);
@@ -158,16 +195,23 @@ const Vehicle: React.FC<VehicleProps> = ({
         };
         const rafId = requestAnimationFrame(animate);
         return () => cancelAnimationFrame(rafId);
-    }, [cache]);
+    }, [computePositionForSeconds, firstNonNull, lastNonNull]);
+
+    // --- Vérifie si le véhicule est actif (disparition hors plage), gère le passage minuit
+    const now = new Date();
+    const effectiveNowSec = getEffectiveNowSec(now);
+    const active = firstNonNull !== null && lastNonNull !== null &&
+        effectiveNowSec >= firstNonNull && effectiveNowSec <= lastNonNull;
+
+    if (!active) return null;
 
     // dynamically compute font size based on text length
     const computeFontSize = (text: string, diameter: number) => {
         const maxFont = diameter / 2; // max font is half the diameter
-        const size = Math.min(maxFont, diameter / Math.max(text.length, 1));
-        return size;
+        return Math.min(maxFont, diameter / Math.max(text.length, 1));
     };
 
-    const diameter = isRunning ? 26 : 22;
+    const diameter = active ? 26 : 22;
     const fontSize = routeShortName ? computeFontSize(routeShortName, diameter) : 12;
 
     const icon = new L.DivIcon({
@@ -193,6 +237,7 @@ const Vehicle: React.FC<VehicleProps> = ({
         iconAnchor: [diameter / 2, diameter / 2],
     });
 
+    // Si aucune position encore calculée (rare, ex: au tout début), affiche au premier point (actif garanti)
     if (!position && coordinates && coordinates.length > 0) {
         return <Marker ref={markerRef} position={coordinates[0]} icon={icon} eventHandlers={{ click: onClick ? () => onClick() : undefined }} />;
     }

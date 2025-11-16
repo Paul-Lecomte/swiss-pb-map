@@ -2,6 +2,7 @@ declare module 'leaflet' {
   const L: any;
   export default L;
   export type LatLngTuple = [number, number];
+  export type Marker = any;
   // minimal namespace for L types used in code
   export as namespace L;
   namespace L {
@@ -16,4 +17,3 @@ declare module 'leaflet' {
     function DomEvent(): any;
   }
 }
-
