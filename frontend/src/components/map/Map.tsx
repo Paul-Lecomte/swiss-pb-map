@@ -587,7 +587,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                             stop_sequence: s.stop_sequence,
                         }));
                     } else if (Array.isArray(fullRoute.properties?.trip_schedules)) {
-                        const schedules = fullRoute.properties.trip_schedules as Array<{ trip_id: string; times: any[] }>;
+                        const schedules = fullRoute.properties.trip_schedules as Array<{ trip_id: string; times: any[]; direction_id?: number }>;
                         vehicleCount = schedules.length;
                         const toTime = (sec: number | null) => {
                             if (sec == null || !isFinite(sec)) return undefined;
@@ -597,17 +597,39 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                             const pad = (n: number) => String(n).padStart(2, '0');
                             return `${pad(h)}:${pad(m)}:${pad(s)}`;
                         };
-                        getStopTimesForVehicle = (idx: number) => stops.map((s: any, stopIdx: number) => {
-                            const pair = schedules[idx]?.times?.[stopIdx];
-                            return {
-                                stop_id: s.stop_id,
-                                stop_lat: s.stop_lat,
-                                stop_lon: s.stop_lon,
-                                arrival_time: Array.isArray(pair) ? toTime(pair[0] ?? null) : pair?.arrival_time,
-                                departure_time: Array.isArray(pair) ? toTime(pair[1] ?? null) : pair?.departure_time,
-                                stop_sequence: s.stop_sequence,
-                            };
-                        });
+                        getStopTimesForVehicle = (idx: number) => {
+                            const dir = Number(schedules[idx]?.direction_id) || 0;
+                            if (dir === 1) {
+                                // reverse: align times and stops in reverse order
+                                return stops.map((_, i: number) => {
+                                    const ri = stops.length - 1 - i;
+                                    const s = stops[ri];
+                                    const pair = schedules[idx]?.times?.[ri];
+                                    return {
+                                        stop_id: s.stop_id,
+                                        stop_lat: s.stop_lat,
+                                        stop_lon: s.stop_lon,
+                                        arrival_time: Array.isArray(pair) ? toTime(pair[0] ?? null) : pair?.arrival_time,
+                                        departure_time: Array.isArray(pair) ? toTime(pair[1] ?? null) : pair?.departure_time,
+                                        stop_sequence: s.stop_sequence,
+                                    };
+                                });
+                            }
+                            // forward
+                            return stops.map((s: any, stopIdx: number) => {
+                                const pair = schedules[idx]?.times?.[stopIdx];
+                                return {
+                                    stop_id: s.stop_id,
+                                    stop_lat: s.stop_lat,
+                                    stop_lon: s.stop_lon,
+                                    arrival_time: Array.isArray(pair) ? toTime(pair[0] ?? null) : pair?.arrival_time,
+                                    departure_time: Array.isArray(pair) ? toTime(pair[1] ?? null) : pair?.departure_time,
+                                    stop_sequence: s.stop_sequence,
+                                };
+                            });
+                        };
+                        // Attach per-vehicle coordinates orientation using direction_id
+                        var coordsForVehicle = (idx: number) => (schedules[idx]?.direction_id === 1 ? [...positions].reverse() : positions);
                     }
 
                     return Array.from({ length: vehicleCount }).map((_, idx: number) => {
@@ -617,12 +639,15 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                         ).length;
                         if (validStopTimesCount < 2) return null;
 
+                        // pick coords considering direction if available
+                        const coordsForThis = typeof coordsForVehicle === 'function' ? coordsForVehicle(idx) : positions;
+
                         return (
                             <Vehicle
                                 key={`veh-${id}-${idx}`}
                                 routeId={id}
                                 routeShortName={fullRoute.properties?.route_short_name}
-                                coordinates={positions}
+                                coordinates={coordsForThis}
                                 stopTimes={stopTimesForVehicle}
                                 color={fullRoute.properties?.route_color || "#264653"}
                                 isRunning={true}

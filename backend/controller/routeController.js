@@ -145,16 +145,8 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
 
         const stopOrder = route.stops || [];
         const trip_schedules = activeTrips.map(trip => {
-            const times = stopOrder.map(s => {
-                const t = trip._timesByStop[s.stop_id];
-                if (!t) return compactTimes ? [null, null] : { arrival_time: null, departure_time: null };
-                if (compactTimes) {
-                    return [gtfsTimeToSeconds(t.arrival_time), gtfsTimeToSeconds(t.departure_time)];
-                }
-                // Only return needed fields if not compacting
-                return { arrival_time: t.arrival_time, departure_time: t.departure_time };
-            });
-            return { trip_id: trip.trip_id, times };
+            const pairs = buildTimesForStopOrder(stopOrder, trip, compactTimes);
+            return { trip_id: trip.trip_id, direction_id: trip.direction_id, times: pairs };
         });
 
         // Clean up temporary property
@@ -260,3 +252,99 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
 });
 
 module.exports = { getRoutesInBbox };
+
+function buildTimesForStopOrder(stopOrder, trip, compactTimes) {
+    const N = Array.isArray(stopOrder) ? stopOrder.length : 0;
+    if (N === 0) return [];
+
+    // Trip stop_times ordered
+    const tripStops = Array.isArray(trip.stop_times) ? [...trip.stop_times].sort((a, b) => (a.stop_sequence || 0) - (b.stop_sequence || 0)) : [];
+    const M = tripStops.length;
+
+    // Fast path: nothing
+    if (M === 0) {
+        const empty = Array.from({ length: N }, () => [null, null]);
+        return compactTimes ? empty : empty.map(([a, d]) => ({ arrival_time: secondsToGtfsTime(a), departure_time: secondsToGtfsTime(d) }));
+    }
+
+    // direction handling: if direction_id === 1, mirror proportional mapping indices
+    const reverseDir = Number(trip?.direction_id) === 1;
+
+    // Index by stop_id for direct matches
+    const byId = Object.create(null);
+    for (const st of tripStops) {
+        byId[st.stop_id] = [gtfsTimeToSeconds(st.arrival_time ?? st.departure_time), gtfsTimeToSeconds(st.departure_time ?? st.arrival_time)];
+    }
+
+    // Initialize with direct matches
+    const result = Array.from({ length: N }, () => [null, null]);
+    const filled = new Array(N).fill(false);
+    for (let i = 0; i < N; i++) {
+        const sid = stopOrder[i]?.stop_id;
+        if (sid && byId[sid]) {
+            result[i] = byId[sid].slice(0);
+            filled[i] = true;
+        }
+    }
+
+    const filledCount = filled.reduce((a, b) => a + (b ? 1 : 0), 0);
+
+    // If no direct matches, map trip indices proportionally to route indices
+    if (filledCount === 0) {
+        for (let j = 0; j < M; j++) {
+            const baseTarget = N === 1 ? 0 : Math.round(j * (N - 1) / (M - 1));
+            const target = reverseDir ? (N - 1 - baseTarget) : baseTarget;
+            const st = tripStops[j];
+            const arr = gtfsTimeToSeconds(st.arrival_time ?? st.departure_time);
+            const dep = gtfsTimeToSeconds(st.departure_time ?? st.arrival_time);
+            if (!filled[target]) {
+                result[target][0] = arr;
+                result[target][1] = dep;
+                filled[target] = true;
+            }
+        }
+    }
+
+    // Interpolate missing slots between nearest filled neighbors
+    let lastIdx = -1;
+    for (let i = 0; i < N; i++) {
+        if (filled[i]) {
+            if (lastIdx >= 0 && i - lastIdx > 1) {
+                const left = result[lastIdx];
+                const right = result[i];
+                const span = i - lastIdx;
+                for (let k = 1; k < span; k++) {
+                    const t = k / span;
+                    for (let c = 0; c < 2; c++) {
+                        const L = left[c];
+                        const R = right[c];
+                        result[lastIdx + k][c] = (L != null && R != null) ? Math.round(L + (R - L) * t) : (L != null ? L : (R != null ? R : null));
+                    }
+                    filled[lastIdx + k] = true;
+                }
+            }
+            lastIdx = i;
+        }
+    }
+    // Propagate edges outward
+    let firstFilled = filled.indexOf(true);
+    if (firstFilled > 0) {
+        for (let i = 0; i < firstFilled; i++) {
+            result[i][0] = result[firstFilled][0];
+            result[i][1] = result[firstFilled][1];
+            filled[i] = true;
+        }
+    }
+    let lastFilled = filled.lastIndexOf(true);
+    if (lastFilled >= 0 && lastFilled < N - 1) {
+        for (let i = lastFilled + 1; i < N; i++) {
+            result[i][0] = result[lastFilled][0];
+            result[i][1] = result[lastFilled][1];
+            filled[i] = true;
+        }
+    }
+
+    if (compactTimes) return result;
+
+    return result.map(([a, d]) => ({ arrival_time: secondsToGtfsTime(a), departure_time: secondsToGtfsTime(d) }));
+}
