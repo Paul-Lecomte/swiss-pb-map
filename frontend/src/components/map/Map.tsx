@@ -583,6 +583,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                     // Determine vehicles from either stop_times at first stop or compact trip_schedules
                     let vehicleCount = 0;
                     let getStopTimesForVehicle: (idx: number) => any[] = () => [];
+                    let coordsForVehicle: ((idx: number) => [number, number][]) | null = null;
                     if (stops[0]?.stop_times && Array.isArray(stops[0].stop_times)) {
                         vehicleCount = stops[0].stop_times.length;
                         getStopTimesForVehicle = (idx: number) => stops.map((s: any) => ({
@@ -636,10 +637,10 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                             });
                         };
                         // Attach per-vehicle coordinates orientation using direction_id
-                        const coordsForVehicle = (idx: number) => (schedules[idx]?.direction_id === 1 ? [...positions].reverse() : positions);
+                        coordsForVehicle = (idx: number) => (schedules[idx]?.direction_id === 1 ? [...positions].reverse() : positions);
                     }
 
-                    return Array.from({ length: vehicleCount }).map((_: undefined, idx: number) => {
+                    return Array.from({ length: vehicleCount }).map((_, idx) => {
                         const stopTimesForVehicle = getStopTimesForVehicle(idx);
                         const validStopTimesCount = stopTimesForVehicle.filter(
                             (st: any) => st.arrival_time || st.departure_time
@@ -647,7 +648,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                         if (validStopTimesCount < 2) return null;
 
                         // pick coords considering direction if available
-                        const coordsForThis = typeof coordsForVehicle === 'function' ? coordsForVehicle(idx) : positions;
+                        const coordsForThis = coordsForVehicle ? coordsForVehicle(idx) : positions;
 
                         return (
                             <Vehicle
@@ -659,6 +660,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                                 color={fullRoute.properties?.route_color || "#264653"}
                                 isRunning={true}
                                 onClick={() => handleRouteClick(fullRoute)}
+                                zoomLevel={zoom}
                             />
                         );
                     });

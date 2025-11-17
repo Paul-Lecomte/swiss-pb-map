@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { Marker } from "react-leaflet";
 import L, { Marker as LeafletMarker } from "leaflet";
+import { useMap } from "react-leaflet";
 
 type LatLngTuple = [number, number];
 
@@ -22,6 +23,7 @@ interface VehicleProps {
     color?: string;
     isRunning?: boolean;
     onClick?: () => void;
+    zoomLevel?: number; // optionnel: permet d'éviter un listener par vehicle
 }
 
 const parseGtfsTime = (s?: unknown): number | null => {
@@ -38,15 +40,34 @@ const sq = (v: number) => v * v;
 const dist2 = (a: LatLngTuple, b: LatLngTuple) => sq(a[0] - b[0]) + sq(a[1] - b[1]);
 
 const Vehicle: React.FC<VehicleProps> = ({
-                                             // routeId omis volontairement
-                                             routeShortName,
-                                             coordinates,
-                                             stopTimes,
-                                             color = "#FF4136",
-                                             // isRunning omis, on calcule l'état actif localement
-                                             onClick,
-                                         }) => {
+    // routeId omis volontairement
+    routeShortName,
+    coordinates,
+    stopTimes,
+    color = "#FF4136",
+    // isRunning omis, on calcule l'état actif localement
+    onClick,
+    zoomLevel: zoomFromProps,
+}) => {
     const markerRef = useRef<LeafletMarker | null>(null);
+
+    // Récupère et suit le niveau de zoom courant pour adapter la taille
+    const map = useMap();
+    const [zoomLevelState, setZoomLevelState] = useState<number>(() => {
+        if (typeof zoomFromProps === 'number') return zoomFromProps;
+        try { return map.getZoom?.() ?? 13; } catch { return 13; }
+    });
+    useEffect(() => {
+        if (typeof zoomFromProps === 'number') {
+            setZoomLevelState(zoomFromProps);
+            return; // ne pas attacher de listener si prop fournie
+        }
+        const update = () => {
+            try { setZoomLevelState(map.getZoom?.() ?? 13); } catch {}
+        };
+        map.on('zoomend', update);
+        return () => { map.off('zoomend', update); };
+    }, [map, zoomFromProps]);
 
     const cache = useMemo(() => {
         // Prépare la géométrie et calcule les correspondances stops->indices sur la polyligne
@@ -166,7 +187,7 @@ const Vehicle: React.FC<VehicleProps> = ({
     const lastNonNull = [...cache.stopTimesSec].reverse().find(t => t != null) ?? null;
 
     // Détermine le nowSec effectif en gérant le wrap autour de minuit pour faire progresser correctement le véhicule
-    const getEffectiveNowSec = (d: Date) => {
+    const getEffectiveNowSec = useCallback((d: Date) => {
         const base = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
         if (firstNonNull !== null && lastNonNull !== null) {
             for (let k = -1; k <= 1; k++) {
@@ -175,7 +196,7 @@ const Vehicle: React.FC<VehicleProps> = ({
             }
         }
         return base;
-    };
+    }, [firstNonNull, lastNonNull]);
 
     // Position initiale avec gestion du wrap
     const [position, setPosition] = useState<LatLngTuple | null>(() => {
@@ -195,7 +216,7 @@ const Vehicle: React.FC<VehicleProps> = ({
         };
         const rafId = requestAnimationFrame(animate);
         return () => cancelAnimationFrame(rafId);
-    }, [computePositionForSeconds, firstNonNull, lastNonNull]);
+    }, [computePositionForSeconds, firstNonNull, lastNonNull, getEffectiveNowSec]);
 
     // --- Vérifie si le véhicule est actif (disparition hors plage), gère le passage minuit
     const now = new Date();
@@ -211,8 +232,10 @@ const Vehicle: React.FC<VehicleProps> = ({
         return Math.min(maxFont, diameter / Math.max(text.length, 1));
     };
 
-    const diameter = active ? 26 : 22;
-    const fontSize = routeShortName ? computeFontSize(routeShortName, diameter) : 12;
+    // Taille adaptative en fonction du zoom (icône plus petite quand on est dézoomé, plafonnée quand on est très zoomé)
+    const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+    const diameter = clamp(8 + 1.2 * (zoomLevelState - 10), 8, 22);
+    const fontSize = routeShortName ? computeFontSize(routeShortName, diameter) : Math.max(8, Math.floor(diameter / 2));
 
     const icon = new L.DivIcon({
         html: `<div style="
