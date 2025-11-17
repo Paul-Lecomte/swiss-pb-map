@@ -18,9 +18,7 @@ export async function streamRoutesInBbox(
     signal?: AbortSignal,
     knownIds?: string[],
     includeStatic?: boolean,
-    compactTimes?: boolean,
     maxTrips?: number,
-    decimals?: number,
     concurrency?: number,
     onlyNew?: boolean,
     onMeta?: (meta: any) => void,
@@ -34,9 +32,7 @@ export async function streamRoutesInBbox(
   params.set('stream', '1');
   if (opts?.knownIds && opts.knownIds.length) params.set('known', opts.knownIds.join(','));
   if (opts?.includeStatic !== undefined) params.set('include_static', opts.includeStatic ? '1' : '0');
-  if (opts?.compactTimes !== undefined) params.set('compact_times', opts.compactTimes ? '1' : '0');
   if (opts?.maxTrips != null) params.set('max_trips', String(opts.maxTrips));
-  if (opts?.decimals != null) params.set('decimals', String(opts.decimals));
   if (opts?.concurrency != null) params.set('concurrency', String(opts.concurrency));
   if (opts?.onlyNew != null) params.set('only_new', opts.onlyNew ? '1' : '0');
   const url = `${API_BASE_URL}/routes/routes-in-bbox?${params.toString()}`;

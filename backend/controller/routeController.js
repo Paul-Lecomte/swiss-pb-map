@@ -39,24 +39,6 @@ const tripIsActive = (trip, weekday, todayStr, currentSeconds) => {
     return currentSeconds >= startSec - 600 && currentSeconds <= stopSec + 600;
 };
 
-const roundCoord = (num, decimals = 5) => {
-    if (typeof num !== 'number' || !isFinite(num)) return num;
-    const f = Math.pow(10, decimals);
-    return Math.round(num * f) / f;
-};
-
-const roundGeometry = (geometry, decimals = 5) => {
-    if (!geometry) return null;
-    if (geometry.type === 'LineString') {
-        return {
-            type: 'LineString',
-            coordinates: geometry.coordinates.map(([lng, lat]) => [roundCoord(lng, decimals), roundCoord(lat, decimals)])
-        };
-    }
-    // fallback: passthrough for other geometry types (e.g., Point if ever used)
-    return geometry;
-};
-
 // ----------------- Route -----------------
 const getRoutesInBbox = asyncHandler(async (req, res) => {
     const { bbox, stream } = req.query;
@@ -70,8 +52,6 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
     const knownSet = new Set((req.query.known ? String(req.query.known).split(',').filter(Boolean) : []));
     const onlyNew = String(req.query.only_new ?? '0') === '1' || String(req.query.only_new ?? '0') === 'true';
     const maxTrips = Math.max(1, Math.min( Number(req.query.max_trips ?? 20), 200));
-    const compactTimes = (String(req.query.compact_times ?? '1') === '1' || String(req.query.compact_times ?? '1') === 'true');
-    const decimals = Math.max(0, Math.min(Number(req.query.decimals ?? 5), 7));
 
     // Initial minimal projection for routes within bbox
     const routeProjection = {
@@ -113,6 +93,7 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
         const tripDocs = await ProcessedStopTimes.find({ route_id: route.route_id }, {
             route_id: 1,
             trip_id: 1,
+            direction_id: 1,
             route_start_time: 1,
             route_stop_time: 1,
             calendar: 1,
@@ -145,7 +126,7 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
 
         const stopOrder = route.stops || [];
         const trip_schedules = activeTrips.map(trip => {
-            const pairs = buildTimesForStopOrder(stopOrder, trip, compactTimes);
+            const pairs = buildTimesForStopOrder(stopOrder, trip);
             return { trip_id: trip.trip_id, direction_id: trip.direction_id, times: pairs };
         });
 
@@ -154,7 +135,7 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
 
         return {
             type: 'Feature',
-            geometry: includeStaticForThis ? roundGeometry(route.geometry, decimals) : null,
+            geometry: includeStaticForThis ? route.geometry : null,
             properties: {
                 route_id: route.route_id,
                 static_included: includeStaticForThis,
@@ -166,16 +147,15 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
                 bounds: includeStaticForThis ? route.bounds : undefined,
                 route_color: route.route_color,
                 route_text_color: route.route_text_color,
-                // New compact format
+                // Always-compact format (seconds pairs)
                 trip_schedules,
-                compact_times: compactTimes,
                 active_trip_count: activeTrips.length,
                 // Include stops only if static data is included
                 stops: includeStaticForThis ? stopOrder.map(s => ({
                     stop_id: s.stop_id,
                     stop_name: s.stop_name,
-                    stop_lat: roundCoord(s.stop_lat, decimals), // Round stop coords too
-                    stop_lon: roundCoord(s.stop_lon, decimals), // Round stop coords too
+                    stop_lat: s.stop_lat,
+                    stop_lon: s.stop_lon,
                     stop_sequence: s.stop_sequence
                 })) : undefined
             }
@@ -191,7 +171,7 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
         if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
         const startedAt = Date.now();
-        res.write(JSON.stringify({ meta: true, bbox, totalRoutes: routes.length, filteredRoutes: candidateRoutes.length, knownCount: knownSet.size, onlyNew, startedAt, compactTimes, decimals, maxTrips }) + '\n');
+        res.write(JSON.stringify({ meta: true, bbox, totalRoutes: routes.length, filteredRoutes: candidateRoutes.length, knownCount: knownSet.size, onlyNew, startedAt, maxTrips }) + '\n');
 
         if (!candidateRoutes.length) {
             res.write(JSON.stringify({ end: true, count: 0, elapsedMs: 0 }) + '\n');
@@ -230,7 +210,7 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
 
     // ----------------- NON-STREAMING Fallback (SIGNIFICANTLY OPTIMIZED) -----------------
     // This now mirrors the efficiency of the streaming path by processing routes individually
-    // and applying all the data reduction parameters (maxTrips, compactTimes, decimals, includeStatic).
+    // and applying all the data reduction parameters (maxTrips, includeStatic).
 
     if (!candidateRoutes.length) return res.json({ type: "FeatureCollection", features: [] });
 
@@ -253,7 +233,7 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
 
 module.exports = { getRoutesInBbox };
 
-function buildTimesForStopOrder(stopOrder, trip, compactTimes) {
+function buildTimesForStopOrder(stopOrder, trip) {
     const N = Array.isArray(stopOrder) ? stopOrder.length : 0;
     if (N === 0) return [];
 
@@ -261,10 +241,21 @@ function buildTimesForStopOrder(stopOrder, trip, compactTimes) {
     const tripStops = Array.isArray(trip.stop_times) ? [...trip.stop_times].sort((a, b) => (a.stop_sequence || 0) - (b.stop_sequence || 0)) : [];
     const M = tripStops.length;
 
-    // Fast path: nothing
+    // Fast path: if no stop_times, interpolate from route_start_time to route_stop_time across all stops
     if (M === 0) {
-        const empty = Array.from({ length: N }, () => [null, null]);
-        return compactTimes ? empty : empty.map(([a, d]) => ({ arrival_time: secondsToGtfsTime(a), departure_time: secondsToGtfsTime(d) }));
+        const startSec = gtfsTimeToSeconds(trip.route_start_time);
+        let stopSec = gtfsTimeToSeconds(trip.route_stop_time);
+        if (startSec == null || stopSec == null) {
+            // return all null if no bounds available
+            return Array.from({ length: N }, () => [null, null]);
+        }
+        if (stopSec < startSec) stopSec += 24 * 3600; // past-midnight handling
+        const out = Array.from({ length: N }, (_, i) => {
+            const t = N === 1 ? 0 : i / (N - 1);
+            const v = Math.round(startSec + (stopSec - startSec) * t);
+            return [v, v];
+        });
+        return out;
     }
 
     // direction handling: if direction_id === 1, mirror proportional mapping indices
@@ -315,7 +306,7 @@ function buildTimesForStopOrder(stopOrder, trip, compactTimes) {
                 const span = i - lastIdx;
                 for (let k = 1; k < span; k++) {
                     const t = k / span;
-                    for (let c = 0; c < 2; c++) {
+                    for (let c = 0;  c < 2; c++) {
                         const L = left[c];
                         const R = right[c];
                         result[lastIdx + k][c] = (L != null && R != null) ? Math.round(L + (R - L) * t) : (L != null ? L : (R != null ? R : null));
@@ -344,7 +335,5 @@ function buildTimesForStopOrder(stopOrder, trip, compactTimes) {
         }
     }
 
-    if (compactTimes) return result;
-
-    return result.map(([a, d]) => ({ arrival_time: secondsToGtfsTime(a), departure_time: secondsToGtfsTime(d) }));
+    return result;
 }

@@ -151,7 +151,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
             const returnedThisCall = new Set<string>();
 
             // dynamic maxTrips by zoom to reduce vehicles at low zoom
-            const maxTripsByZoom = zoom >= 15 ? 24 : zoom >= 13 ? 12 : 6;
+            const maxTripsByZoom = zoom >= 15 ? 30 : zoom >= 13 ? 30 : 30;
 
             await streamRoutesInBbox(
               bbox,
@@ -206,9 +206,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                 signal: ac.signal,
                 knownIds,
                 includeStatic: true,
-                compactTimes: true,
                 maxTrips: maxTripsByZoom,
-                decimals: 5,
                 concurrency: 10,
                 onlyNew: true,
                 onMeta: (m) => setStreamInfo(prev => ({ ...prev, total: m.filteredRoutes ?? m.totalRoutes })),
@@ -629,10 +627,10 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                             });
                         };
                         // Attach per-vehicle coordinates orientation using direction_id
-                        var coordsForVehicle = (idx: number) => (schedules[idx]?.direction_id === 1 ? [...positions].reverse() : positions);
+                        const coordsForVehicle = (idx: number) => (schedules[idx]?.direction_id === 1 ? [...positions].reverse() : positions);
                     }
 
-                    return Array.from({ length: vehicleCount }).map((_, idx: number) => {
+                    return Array.from({ length: vehicleCount }).map((_: undefined, idx: number) => {
                         const stopTimesForVehicle = getStopTimesForVehicle(idx);
                         const validStopTimesCount = stopTimesForVehicle.filter(
                             (st: any) => st.arrival_time || st.departure_time
