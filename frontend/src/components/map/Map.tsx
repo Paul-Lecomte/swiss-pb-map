@@ -75,6 +75,8 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
     }
 
     const loadStops = async (bbox: number[], zoom: number, maxZoom: number) => {
+        // Do not perform any API call while panel open
+        if (selectedRoute) return;
         if (zoom === maxZoom) {
             const data = await fetchStopsInBbox(bbox, zoom);
             setStops(data.features || []);
@@ -105,6 +107,8 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
     }, []);
 
     const requestRoutes = async (bbox: number[], zoom: number) => {
+        // When panel is open, do not start new streams
+        if (selectedRoute) return;
         if (isStreamingRef.current) {
             // Queue latest request; it will run right after the current finishes
             pendingRequestRef.current = { bbox, zoom };
@@ -120,6 +124,31 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
             requestRoutes(pending.bbox, pending.zoom);
         }
     };
+
+    // Abort ongoing streaming when panel opens; resume when it closes
+    useEffect(() => {
+        if (selectedRoute) {
+            // Abort current stream to freeze data
+            try { streamAbortRef.current?.abort(); } catch {}
+            isStreamingRef.current = false;
+            pendingRequestRef.current = null;
+        } else {
+            // Panel closed -> resume by fetching current map bbox
+            if (mapRef.current) {
+                const bounds = mapRef.current.getBounds?.();
+                const currentZoom = mapRef.current.getZoom?.();
+                if (bounds && typeof currentZoom === 'number') {
+                    const bbox = [
+                        bounds.getSouthWest().lng,
+                        bounds.getSouthWest().lat,
+                        bounds.getNorthEast().lng,
+                        bounds.getNorthEast().lat,
+                    ];
+                    requestRoutes(bbox, currentZoom);
+                }
+            }
+        }
+    }, [selectedRoute]);
 
     const loadRoutesStreaming = async (bbox: number[], zoom: number) => {
         const bboxKey = bbox.join(",");
@@ -151,7 +180,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
             const returnedThisCall = new Set<string>();
 
             // dynamic maxTrips by zoom to reduce vehicles at low zoom
-            const maxTripsByZoom = zoom >= 15 ? 30 : zoom >= 13 ? 30 : 30;
+            const maxTripsByZoom = zoom >= 15 ? 24 : zoom >= 13 ? 12 : 6;
 
             await streamRoutesInBbox(
               bbox,
@@ -259,6 +288,8 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
     function MapEvents() {
         const debouncedLoad = useRef(
             debounce((bbox: number[], currentZoom: number, maxZoom: number) => {
+                // Guard: do not call APIs while panel open
+                if (selectedRoute) return;
                 loadStops(bbox, currentZoom, maxZoom);
                 requestRoutes(bbox, currentZoom);
             }, 650)
@@ -286,6 +317,8 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                     const maxZoom = map.getMaxZoom();
 
                     setZoom(currentZoom);
+                    // Guard: no API calls while panel open
+                    if (selectedRoute) return;
                     debouncedLoad(bbox, currentZoom, maxZoom);
                 }, 500);
             },
@@ -304,6 +337,8 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                 const maxZoom = map.getMaxZoom();
 
                 setZoom(currentZoom);
+                // Guard: no API calls while panel open
+                if (selectedRoute) return;
                 debouncedLoad(bbox, currentZoom, maxZoom);
             },
         });
@@ -574,6 +609,8 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                     // Determine vehicles from either stop_times at first stop or compact trip_schedules
                     let vehicleCount = 0;
                     let getStopTimesForVehicle: (idx: number) => any[] = () => [];
+                    // coords orientation function per-vehicle (nullable)
+                    let coordsForVehicle: ((idx: number) => [number, number][]) | null = null;
                     if (stops[0]?.stop_times && Array.isArray(stops[0].stop_times)) {
                         vehicleCount = stops[0].stop_times.length;
                         getStopTimesForVehicle = (idx: number) => stops.map((s: any) => ({
@@ -599,7 +636,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                             const dir = Number(schedules[idx]?.direction_id) || 0;
                             if (dir === 1) {
                                 // reverse: align times and stops in reverse order
-                                return stops.map((_, i: number) => {
+                                return stops.map((_: unknown, i: number) => {
                                     const ri = stops.length - 1 - i;
                                     const s = stops[ri];
                                     const pair = schedules[idx]?.times?.[ri];
@@ -627,10 +664,10 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                             });
                         };
                         // Attach per-vehicle coordinates orientation using direction_id
-                        const coordsForVehicle = (idx: number) => (schedules[idx]?.direction_id === 1 ? [...positions].reverse() : positions);
+                        coordsForVehicle = (idx: number) => (schedules[idx]?.direction_id === 1 ? [...positions].reverse() : positions);
                     }
 
-                    return Array.from({ length: vehicleCount }).map((_: undefined, idx: number) => {
+                    return Array.from({ length: vehicleCount }).map((_value, idx: number) => {
                         const stopTimesForVehicle = getStopTimesForVehicle(idx);
                         const validStopTimesCount = stopTimesForVehicle.filter(
                             (st: any) => st.arrival_time || st.departure_time
@@ -638,7 +675,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                         if (validStopTimesCount < 2) return null;
 
                         // pick coords considering direction if available
-                        const coordsForThis = typeof coordsForVehicle === 'function' ? coordsForVehicle(idx) : positions;
+                        const coordsForThis = coordsForVehicle ? coordsForVehicle(idx) : positions;
 
                         return (
                             <Vehicle
