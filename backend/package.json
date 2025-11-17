@@ -9,8 +9,6 @@
     "update-stoptimes": "node --max-old-space-size=32768 utils/gtfsDataUpdater.js --processedstoptimes",
     "update-stops": "node --max-old-space-size=32768 utils/gtfsDataUpdater.js --processedstops",
     "update-gtfs": "node --max-old-space-size=32768 utils/gtfsDataUpdater.js --base",
-    "build:live-routes": "node --max-old-space-size=32768 scripts/buildLiveRoutes.js",
-    "rebuild:live-routes": "node --max-old-space-size=32768 scripts/buildLiveRoutes.js --drop",
     "test": "node tests/realtime.spec.js"
   },
   "author": "Lecomte Paul",
@@ -21,6 +19,7 @@
     "axios": "^1.8.1",
     "bcrypt": "^5.1.1",
     "cheerio": "^1.0.0",
+    "compression": "^1.7.5",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "csv-parse": "^5.6.0",
@@ -29,20 +28,19 @@
     "express": "^4.21.2",
     "express-async-handler": "^1.2.0",
     "geojson-rbush": "^3.2.0",
+    "geojson-vt": "^3.2.1",
     "geopackage": "^1.0.2",
     "gtfs-realtime-bindings": "^1.1.1",
     "js-priority-queue": "^0.1.5",
     "jsonwebtoken": "^9.0.2",
     "luxon": "^3.7.2",
     "mongodb": "^6.18.0",
-    "mongoose": "^8.9.7",
-    "morgan": "^1.10.0",
-    "compression": "^1.7.5",
-    "yargs": "^17.7.2",
     "proj4": "^2.9.2",
     "stream-json": "^1.9.1",
     "unzipper": "^0.12.3",
-    "xmldom": "^0.6.0"
+    "vt-pbf": "^3.1.1",
+    "xmldom": "^0.6.0",
+    "yargs": "^17.7.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"
