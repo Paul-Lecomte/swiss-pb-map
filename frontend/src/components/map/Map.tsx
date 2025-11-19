@@ -18,7 +18,7 @@ import Vehicle from "@/components/vehicle/Vehicle";
 import { LayerState } from "../layer_option/LayerOption";
 import StreamProgress from "@/components/progress/StreamProgress";
 // Ajout import URL pour worker
-// @ts-ignore
+// @ts-expect-error - import.meta.url usage for worker URL (only in client build)
 const routeStreamWorkerUrl = typeof window !== 'undefined' ? new URL('../../workers/routeStreamWorker.js', import.meta.url) : null;
 
 // Layer visibility state type
@@ -311,54 +311,48 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
     }
 
     function MapEvents() {
-        const debouncedLoad = useRef(
-            debounce((bbox: number[], currentZoom: number, maxZoom: number) => {
-                loadStops(bbox, currentZoom, maxZoom);
-                if (!routeLineOpenRef.current) requestRoutes(bbox, currentZoom);
-            }, 650)
-        ).current;
-
-        // A timeout to delay the "stop moving" detection
+        // When the map is moved/zoomed we want to wait until the camera has
+        // stopped moving for 3 seconds before calling the routes API. This
+        // avoids heavy streaming calls while the user is actively panning/zooming.
+        const STOP_DELAY_MS = 4000;
         const moveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+        const triggerLoad = (map: any) => {
+            const bounds = map.getBounds();
+            const bbox = [
+                bounds.getSouthWest().lng,
+                bounds.getSouthWest().lat,
+                bounds.getNorthEast().lng,
+                bounds.getNorthEast().lat,
+            ];
+            const currentZoom = map.getZoom();
+            const maxZoom = map.getMaxZoom();
+
+            setZoom(currentZoom);
+            // loadStops is allowed to run immediately for stops (lighter), but
+            // requestRoutes will only run when the camera stopped for STOP_DELAY_MS.
+            loadStops(bbox, currentZoom, maxZoom);
+            if (!routeLineOpenRef.current) requestRoutes(bbox, currentZoom);
+        };
 
         useMapEvents({
             move: (e: any) => {
                 // Clear any pending timeout if user keeps moving
                 if (moveTimeout.current) clearTimeout(moveTimeout.current);
-
-                // When user stops for 500ms, then trigger
+                // Set a new timeout: only when the camera has been idle for STOP_DELAY_MS
                 moveTimeout.current = setTimeout(() => {
-                    const map = e.target;
-                    const bounds = map.getBounds();
-                    const bbox = [
-                        bounds.getSouthWest().lng,
-                        bounds.getSouthWest().lat,
-                        bounds.getNorthEast().lng,
-                        bounds.getNorthEast().lat,
-                    ];
-                    const currentZoom = map.getZoom();
-                    const maxZoom = map.getMaxZoom();
-
-                    setZoom(currentZoom);
-                    debouncedLoad(bbox, currentZoom, maxZoom);
-                }, 500);
+                    triggerLoad(e.target);
+                    moveTimeout.current = null;
+                }, STOP_DELAY_MS);
             },
 
             zoomend: (e: any) => {
-                // Also trigger when zooming stops
-                const map = e.target;
-                const bounds = map.getBounds();
-                const bbox = [
-                    bounds.getSouthWest().lng,
-                    bounds.getSouthWest().lat,
-                    bounds.getNorthEast().lng,
-                    bounds.getNorthEast().lat,
-                ];
-                const currentZoom = map.getZoom();
-                const maxZoom = map.getMaxZoom();
-
-                setZoom(currentZoom);
-                debouncedLoad(bbox, currentZoom, maxZoom);
+                // Clear previous timeout and schedule the same stop-detection delay
+                if (moveTimeout.current) clearTimeout(moveTimeout.current);
+                moveTimeout.current = setTimeout(() => {
+                    triggerLoad(e.target);
+                    moveTimeout.current = null;
+                }, STOP_DELAY_MS);
             },
         });
 
@@ -657,19 +651,19 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                             const dir = Number(schedules[idx]?.direction_id) || 0;
                             if (dir === 1) {
                                 // reverse: align times and stops in reverse order
-                                return stops.map((_, i: number) => {
-                                    const ri = stops.length - 1 - i;
-                                    const s = stops[ri];
-                                    const pair = schedules[idx]?.times?.[ri];
-                                    return {
-                                        stop_id: s.stop_id,
-                                        stop_lat: s.stop_lat,
-                                        stop_lon: s.stop_lon,
-                                        arrival_time: Array.isArray(pair) ? toTime(pair[0] ?? null) : pair?.arrival_time,
-                                        departure_time: Array.isArray(pair) ? toTime(pair[1] ?? null) : pair?.departure_time,
-                                        stop_sequence: s.stop_sequence,
-                                    };
-                                });
+                                return stops.map((_: any, i: number) => {
+                                     const ri = stops.length - 1 - i;
+                                     const s = stops[ri];
+                                     const pair = schedules[idx]?.times?.[ri];
+                                     return {
+                                         stop_id: s.stop_id,
+                                         stop_lat: s.stop_lat,
+                                         stop_lon: s.stop_lon,
+                                         arrival_time: Array.isArray(pair) ? toTime(pair[0] ?? null) : pair?.arrival_time,
+                                         departure_time: Array.isArray(pair) ? toTime(pair[1] ?? null) : pair?.departure_time,
+                                         stop_sequence: s.stop_sequence,
+                                     };
+                                 });
                             }
                             // forward
                             return stops.map((s: any, stopIdx: number) => {

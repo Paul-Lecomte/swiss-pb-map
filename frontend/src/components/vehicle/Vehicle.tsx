@@ -40,15 +40,15 @@ const sq = (v: number) => v * v;
 const dist2 = (a: LatLngTuple, b: LatLngTuple) => sq(a[0] - b[0]) + sq(a[1] - b[1]);
 
 const Vehicle: React.FC<VehicleProps> = ({
-    // routeId omis volontairement
-    routeShortName,
-    coordinates,
-    stopTimes,
-    color = "#FF4136",
-    // isRunning omis, on calcule l'état actif localement
-    onClick,
-    zoomLevel: zoomFromProps,
-}) => {
+                                             // routeId omis volontairement
+                                             routeShortName,
+                                             coordinates,
+                                             stopTimes,
+                                             color = "#FF4136",
+                                             // isRunning omis, on calcule l'état actif localement
+                                             onClick,
+                                             zoomLevel: zoomFromProps,
+                                         }) => {
     const markerRef = useRef<LeafletMarker | null>(null);
 
     // Récupère et suit le niveau de zoom courant pour adapter la taille
