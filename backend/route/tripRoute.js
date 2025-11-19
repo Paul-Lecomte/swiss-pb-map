@@ -1,11 +1,17 @@
 const express = require('express');
 const tripController = require('../controller/tripController');
+const processedStopTimesController = require('../controller/processedStopTimesController');
 const router = express.Router();
 
 // @desc     Get trip info
 // @route    GET /api/trip/:_id
 // @access   public
 router.route('/id/:stop_id').get(tripController.getTrip);
+
+// @desc     Get processed stoptimes compact by trip_id
+// @route    GET /api/trip/processed/:trip_id
+// @access   public
+router.route('/processed/:trip_id').get(processedStopTimesController.getProcessedStopTimesByTripId);
 
 // @desc     Get timetable for a given stop
 // @route    GET /api/trip/timetable/:_id
