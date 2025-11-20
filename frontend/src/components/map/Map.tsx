@@ -80,8 +80,8 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
     };
 
     const routesCacheRef = useRef<Map<string, { route: any; bboxes: number[][]; lastAccess: number }>>(new Map());
-    const MAX_ROUTE_CACHE_ENTRIES = 400; // hard cap to avoid memory overuse
-    const TARGET_ROUTE_CACHE_ENTRIES = 300; // shrink-to size after eviction
+    const MAX_ROUTE_CACHE_ENTRIES = 200; // hard cap to avoid memory overuse
+    const TARGET_ROUTE_CACHE_ENTRIES = 100; // shrink-to size after eviction
     // Cache eviction helper (LRU-ish prioritizing entries outside current bbox)
     const evictCacheIfNeeded = (currentBbox?: number[]) => {
         const cache = routesCacheRef.current;
