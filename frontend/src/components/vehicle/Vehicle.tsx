@@ -107,14 +107,16 @@ function simplify(coords: LatLngTuple[], tolerance = 1e-5, maxPoints = 300): Lat
 }
 
 const Vehicle: React.FC<VehicleProps> = ({
-                                             routeShortName,
-                                             coordinates,
-                                             stopTimes,
-                                             color = "#FF4136",
-                                             onClick,
-                                             zoomLevel: zoomFromProps,
-                                         }) => {
+    routeShortName,
+    coordinates,
+    stopTimes,
+    color = "#FF4136",
+    onClick,
+    zoomLevel: zoomFromProps,
+}) => {
     const markerRef = useRef<LeafletMarker | null>(null);
+    // High-res displayed position smoothing ref (does NOT store history)
+    const displayedPosRef = useRef<LatLngTuple | null>(null);
     const map = useMap();
     const [zoomLevelState, setZoomLevelState] = useState<number>(() => {
         if (typeof zoomFromProps === 'number') return zoomFromProps;
@@ -199,17 +201,16 @@ const Vehicle: React.FC<VehicleProps> = ({
     }, [coordinates, stopTimes]);
 
     const computePositionForSeconds = useCallback((secondsNow: number): LatLngTuple | null => {
+        // Accept fractional seconds for smoother interpolation
         const c = cache;
         if (!c || !c.segments || c.segments.length === 0) {
             if (c.coords && c.coords.length) return c.coords[0];
             return null;
         }
-
         let seg: typeof c.segments[0] | null = null;
         for (const s of c.segments) {
             if (secondsNow >= s.startSec && secondsNow <= s.endSec) { seg = s; break; }
         }
-
         if (!seg) {
             const first = c.segments[0];
             const last = c.segments[c.segments.length - 1];
@@ -223,14 +224,12 @@ const Vehicle: React.FC<VehicleProps> = ({
             }
             return c.coords[best.endIdx];
         }
-
         const { startIdx, endIdx, startSec, endSec } = seg;
         const frac = (secondsNow - startSec) / Math.max(1, (endSec - startSec));
         const cum = c.cumDist;
         const segStartDist = cum[startIdx] ?? 0;
         const segEndDist = cum[endIdx] ?? segStartDist + 1;
         const targetDist = segStartDist + (segEndDist - segStartDist) * frac;
-
         let i = startIdx;
         while (i < endIdx && cum[i + 1] < targetDist) i++;
         const d0 = cum[i];
@@ -245,6 +244,7 @@ const Vehicle: React.FC<VehicleProps> = ({
     const lastNonNull = [...cache.stopTimesSec].reverse().find(t => t != null) ?? null;
 
     const getEffectiveNowSec = useCallback((d: Date) => {
+        // Integer seconds for active state checks
         const base = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
         if (firstNonNull !== null && lastNonNull !== null) {
             for (let k = -1; k <= 1; k++) {
@@ -253,6 +253,19 @@ const Vehicle: React.FC<VehicleProps> = ({
             }
         }
         return base;
+    }, [firstNonNull, lastNonNull]);
+
+    // High-resolution fractional seconds (with day shift handling) for smooth interpolation
+    const getEffectiveNowSecHighRes = useCallback((d: Date) => {
+        const msInDay = d.getHours() * 3600_000 + d.getMinutes() * 60_000 + d.getSeconds() * 1000 + d.getMilliseconds();
+        let secondsFloat = msInDay / 1000;
+        if (firstNonNull !== null && lastNonNull !== null) {
+            for (let k = -1; k <= 1; k++) {
+                const shifted = secondsFloat + k * 86400;
+                if (shifted >= firstNonNull && shifted <= lastNonNull) return shifted;
+            }
+        }
+        return secondsFloat;
     }, [firstNonNull, lastNonNull]);
 
     const [position, setPosition] = useState<LatLngTuple | null>(() => {
@@ -269,20 +282,28 @@ const Vehicle: React.FC<VehicleProps> = ({
     useEffect(() => {
         // Register global animation callback instead of per-component RAF loop
         const update = () => {
-            const date = new Date();
-            const secondsNow = getEffectiveNowSec(date);
-            const p = computePositionForSeconds(secondsNow);
-            if (p) {
-                if (markerRef.current) markerRef.current.setLatLng(p);
-                else setPosition(p); // initial mount fallback
+            const now = new Date();
+            const secondsNowFloat = getEffectiveNowSecHighRes(now);
+            const target = computePositionForSeconds(secondsNowFloat);
+            if (!target) return;
+            const current = displayedPosRef.current;
+            if (!current) {
+                displayedPosRef.current = target;
+                if (markerRef.current) markerRef.current.setLatLng(target); else setPosition(target);
+                return;
             }
+            // Exponential smoothing towards target for micro-frame interpolation
+            const smoothing = 0.18; // trade-off between responsiveness & smoothness
+            const newLat = current[0] + (target[0] - current[0]) * smoothing;
+            const newLon = current[1] + (target[1] - current[1]) * smoothing;
+            const newPos: LatLngTuple = [newLat, newLon];
+            displayedPosRef.current = newPos;
+            if (markerRef.current) markerRef.current.setLatLng(newPos); else setPosition(newPos);
         };
         animationSubscribers.add(update);
         startGlobalAnimation();
-        return () => {
-            animationSubscribers.delete(update);
-        };
-    }, [computePositionForSeconds, getEffectiveNowSec]);
+        return () => { animationSubscribers.delete(update); };
+    }, [computePositionForSeconds, getEffectiveNowSecHighRes]);
 
     const now = new Date();
     const effectiveNowSec = getEffectiveNowSec(now);
@@ -306,8 +327,7 @@ const Vehicle: React.FC<VehicleProps> = ({
     const fontSize = routeShortName ? computeFontSize(routeShortName, diameter) : Math.max(8, Math.floor(diameter / 2));
 
     // build one-line style string to avoid CSS linter/validator issues
-    const styleStr =
-        `width:${diameter}px;height:${diameter}px;background-color:white;color:${color};font-size:${fontSize}px;font-weight:bold;display:flex;align-items:center;justify-content:center;border-radius:50%;border:2px solid ${color};box-shadow:0 0 3px rgba(0,0,0,0.3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`;
+    const styleStr = `width:${diameter}px;height:${diameter}px;background-color:white;color:${color};font-size:${fontSize}px;font-weight:bold;display:flex;align-items:center;justify-content:center;border-radius:50%;border:2px solid ${color};box-shadow:0 0 3px rgba(0,0,0,0.3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:width 0.2s ease,height 0.2s ease,font-size 0.2s ease,transform 0.25s ease;`;
 
     const icon = useMemo(() => new L.DivIcon({
         html: `<div style="${styleStr}">${routeShortName || ""}</div>`,
