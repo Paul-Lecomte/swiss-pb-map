@@ -23,15 +23,13 @@ interface VehicleProps {
     color?: string;
     isRunning?: boolean;
     onClick?: () => void;
-    zoomLevel?: number; // optionnel: permet d'éviter un listener par vehicle
+    zoomLevel?: number;
 }
 
 const parseGtfsTime = (s?: unknown): number | null => {
-    if (typeof s !== "string") return null; // ensure it's a string
-
+    if (typeof s !== "string") return null;
     const parts = s.split(":").map(p => parseInt(p, 10));
     if (parts.length < 2 || parts.some(isNaN)) return null;
-
     const [hours = 0, mins = 0, secs = 0] = parts;
     return hours * 3600 + mins * 60 + secs;
 };
@@ -40,18 +38,14 @@ const sq = (v: number) => v * v;
 const dist2 = (a: LatLngTuple, b: LatLngTuple) => sq(a[0] - b[0]) + sq(a[1] - b[1]);
 
 const Vehicle: React.FC<VehicleProps> = ({
-                                             // routeId omis volontairement
                                              routeShortName,
                                              coordinates,
                                              stopTimes,
                                              color = "#FF4136",
-                                             // isRunning omis, on calcule l'état actif localement
                                              onClick,
                                              zoomLevel: zoomFromProps,
                                          }) => {
     const markerRef = useRef<LeafletMarker | null>(null);
-
-    // Récupère et suit le niveau de zoom courant pour adapter la taille
     const map = useMap();
     const [zoomLevelState, setZoomLevelState] = useState<number>(() => {
         if (typeof zoomFromProps === 'number') return zoomFromProps;
@@ -60,7 +54,7 @@ const Vehicle: React.FC<VehicleProps> = ({
     useEffect(() => {
         if (typeof zoomFromProps === 'number') {
             setZoomLevelState(zoomFromProps);
-            return; // ne pas attacher de listener si prop fournie
+            return;
         }
         const update = () => {
             try { setZoomLevelState(map.getZoom?.() ?? 13); } catch {}
@@ -70,7 +64,6 @@ const Vehicle: React.FC<VehicleProps> = ({
     }, [map, zoomFromProps]);
 
     const cache = useMemo(() => {
-        // Prépare la géométrie et calcule les correspondances stops->indices sur la polyligne
         let coords = (coordinates || []).map(c => [Number(c[0]), Number(c[1])] as LatLngTuple);
         const prelimStopIndices: number[] = [];
         const stopTimesSec: (number | null)[] = [];
@@ -78,9 +71,7 @@ const Vehicle: React.FC<VehicleProps> = ({
         for (const s of (stopTimes || [])) {
             const lat = Number(s.stop_lat);
             const lon = Number(s.stop_lon);
-            // Calcul des temps (premier)
             stopTimesSec.push(parseGtfsTime(s.arrival_time ?? s.departure_time ?? undefined));
-
             if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
                 prelimStopIndices.push(-1);
                 continue;
@@ -97,13 +88,11 @@ const Vehicle: React.FC<VehicleProps> = ({
             prelimStopIndices.push(bestIdx);
         }
 
-        // Détecte si la géométrie est inversée par rapport à l'ordre des arrêts
         const firstValidIdx = prelimStopIndices.find(idx => idx >= 0);
         const lastValidIdx = [...prelimStopIndices].reverse().find(idx => idx >= 0);
         const isReversedGeom =
             typeof firstValidIdx === "number" && typeof lastValidIdx === "number" && firstValidIdx > lastValidIdx;
 
-        // Si inversée, renverse les coordonnées et remappe les indices
         let stopIndices: number[];
         if (isReversedGeom) {
             const n = coords.length;
@@ -113,7 +102,6 @@ const Vehicle: React.FC<VehicleProps> = ({
             stopIndices = prelimStopIndices;
         }
 
-        // Segments entre stops valides et distances cumulées sur la (éventuelle) géométrie inversée
         type Seg = { startIdx: number; endIdx: number; startSec: number; endSec: number };
         const segments: Seg[] = [];
         for (let i = 0; i < stopIndices.length - 1; i++) {
@@ -182,11 +170,9 @@ const Vehicle: React.FC<VehicleProps> = ({
         return [a[0] + (b[0] - a[0]) * localFrac, a[1] + (b[1] - a[1]) * localFrac];
     }, [cache]);
 
-    // --- bornes horaires (premier et dernier temps non nuls)
     const firstNonNull = cache.stopTimesSec.find(t => t != null) ?? null;
     const lastNonNull = [...cache.stopTimesSec].reverse().find(t => t != null) ?? null;
 
-    // Détermine le nowSec effectif en gérant le wrap autour de minuit pour faire progresser correctement le véhicule
     const getEffectiveNowSec = useCallback((d: Date) => {
         const base = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
         if (firstNonNull !== null && lastNonNull !== null) {
@@ -198,12 +184,16 @@ const Vehicle: React.FC<VehicleProps> = ({
         return base;
     }, [firstNonNull, lastNonNull]);
 
-    // Position initiale avec gestion du wrap
     const [position, setPosition] = useState<LatLngTuple | null>(() => {
         const now = new Date();
         const secondsNow = getEffectiveNowSec(now);
         return computePositionForSeconds(secondsNow);
     });
+
+    // Hover state and handlers must be declared unconditionally (before any early return)
+    const [hovered, setHovered] = useState(false);
+    const handleMouseOver = useCallback(() => setHovered(true), []);
+    const handleMouseOut = useCallback(() => setHovered(false), []);
 
     useEffect(() => {
         const animate = () => {
@@ -218,7 +208,6 @@ const Vehicle: React.FC<VehicleProps> = ({
         return () => cancelAnimationFrame(rafId);
     }, [computePositionForSeconds, firstNonNull, lastNonNull, getEffectiveNowSec]);
 
-    // --- Vérifie si le véhicule est actif (disparition hors plage), gère le passage minuit
     const now = new Date();
     const effectiveNowSec = getEffectiveNowSec(now);
     const active = firstNonNull !== null && lastNonNull !== null &&
@@ -226,43 +215,42 @@ const Vehicle: React.FC<VehicleProps> = ({
 
     if (!active) return null;
 
-    // dynamically compute font size based on text length
     const computeFontSize = (text: string, diameter: number) => {
-        const maxFont = diameter / 2; // max font is half the diameter
+        const maxFont = diameter / 2;
         return Math.min(maxFont, diameter / Math.max(text.length, 1));
     };
 
-    // Taille adaptative en fonction du zoom (icône plus petite quand on est dézoomé, plafonnée quand on est très zoomé)
     const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
-    const diameter = clamp(8 + 1.2 * (zoomLevelState - 10), 8, 22);
+    const baseDiameter = clamp(8 + 1.2 * (zoomLevelState - 10), 8, 22);
+
+    const hoverScale = 2.5; // scale when hovered
+    const diameter = hovered ? clamp(baseDiameter * hoverScale, 8, 50) : baseDiameter;
     const fontSize = routeShortName ? computeFontSize(routeShortName, diameter) : Math.max(8, Math.floor(diameter / 2));
 
+    // build one-line style string to avoid CSS linter/validator issues
+    const styleStr =
+        `width:${diameter}px;height:${diameter}px;background-color:white;color:${color};font-size:${fontSize}px;font-weight:bold;display:flex;align-items:center;justify-content:center;border-radius:50%;border:2px solid ${color};box-shadow:0 0 3px rgba(0,0,0,0.3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`;
+
     const icon = new L.DivIcon({
-        html: `<div style="
-            width: ${diameter}px;
-            height: ${diameter}px;
-            background-color: white;
-            color: ${color};
-            font-size: ${fontSize}px;
-            font-weight: bold;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 50%;
-            border: 2px solid ${color};
-            box-shadow: 0 0 3px rgba(0,0,0,0.3);
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        ">${routeShortName || ""}</div>`,
+        html: `<div style="${styleStr}">${routeShortName || ""}</div>`,
         className: "",
         iconSize: [diameter, diameter],
         iconAnchor: [diameter / 2, diameter / 2],
     });
 
-    // Si aucune position encore calculée (rare, ex: au tout début), affiche au premier point (actif garanti)
     if (!position && coordinates && coordinates.length > 0) {
-        return <Marker ref={markerRef} position={coordinates[0]} icon={icon} eventHandlers={{ click: onClick ? () => onClick() : undefined }} />;
+        return (
+            <Marker
+                ref={markerRef}
+                position={coordinates[0]}
+                icon={icon}
+                eventHandlers={{
+                    click: onClick ? () => onClick() : undefined,
+                    mouseover: handleMouseOver,
+                    mouseout: handleMouseOut,
+                }}
+            />
+        );
     }
 
     return (
@@ -270,7 +258,11 @@ const Vehicle: React.FC<VehicleProps> = ({
             ref={markerRef}
             position={position as LatLngTuple}
             icon={icon}
-            eventHandlers={{ click: onClick ? () => onClick() : undefined }}
+            eventHandlers={{
+                click: onClick ? () => onClick() : undefined,
+                mouseover: handleMouseOver,
+                mouseout: handleMouseOut,
+            }}
         />
     );
 };
