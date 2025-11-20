@@ -258,7 +258,7 @@ const Vehicle: React.FC<VehicleProps> = ({
     // High-resolution fractional seconds (with day shift handling) for smooth interpolation
     const getEffectiveNowSecHighRes = useCallback((d: Date) => {
         const msInDay = d.getHours() * 3600_000 + d.getMinutes() * 60_000 + d.getSeconds() * 1000 + d.getMilliseconds();
-        let secondsFloat = msInDay / 1000;
+        const secondsFloat = msInDay / 1000;
         if (firstNonNull !== null && lastNonNull !== null) {
             for (let k = -1; k <= 1; k++) {
                 const shifted = secondsFloat + k * 86400;
@@ -322,12 +322,19 @@ const Vehicle: React.FC<VehicleProps> = ({
     const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
     const baseDiameter = clamp(8 + 1.2 * (zoomLevelState - 10), 8, 22);
 
-    const hoverScale = 2.5; // scale when hovered
-    const diameter = hovered ? clamp(baseDiameter * hoverScale, 8, 50) : baseDiameter;
+    // Smoother hover scale: reduced factor & transform-only animation
+    const hoverScale = 2.5; // gentle scale for subtle effect
+    const scale = hovered ? hoverScale : 1;
+    const diameter = baseDiameter; // keep constant; visual size changes via transform only
     const fontSize = routeShortName ? computeFontSize(routeShortName, diameter) : Math.max(8, Math.floor(diameter / 2));
 
-    // build one-line style string to avoid CSS linter/validator issues
-    const styleStr = `width:${diameter}px;height:${diameter}px;background-color:white;color:${color};font-size:${fontSize}px;font-weight:bold;display:flex;align-items:center;justify-content:center;border-radius:50%;border:2px solid ${color};box-shadow:0 0 3px rgba(0,0,0,0.3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:width 0.2s ease,height 0.2s ease,font-size 0.2s ease,transform 0.25s ease;`;
+    // Subtle box-shadow expansion on hover
+    const boxShadow = hovered
+        ? "0 0 8px 2px rgba(0,0,0,0.18)"
+        : "0 0 3px rgba(0,0,0,0.3)";
+
+    // Smooth transform-only transition for gentle grow/shrink
+    const styleStr = `width:${diameter}px;height:${diameter}px;background-color:white;color:${color};font-size:${fontSize}px;font-weight:bold;display:flex;align-items:center;justify-content:center;border-radius:50%;border:1px solid ${color};box-shadow:${boxShadow};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;will-change:transform,box-shadow;transform:scale(${scale});transition:transform 4s cubic-bezier(.33,1,.68,1),box-shadow 0.8s cubic-bezier(.33,1,.68,1);`;
 
     const icon = useMemo(() => new L.DivIcon({
         html: `<div style="${styleStr}">${routeShortName || ""}</div>`,
