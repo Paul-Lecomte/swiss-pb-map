@@ -37,6 +37,75 @@ const parseGtfsTime = (s?: unknown): number | null => {
 const sq = (v: number) => v * v;
 const dist2 = (a: LatLngTuple, b: LatLngTuple) => sq(a[0] - b[0]) + sq(a[1] - b[1]);
 
+// Global animation registry to avoid one RAF per vehicle
+const animationSubscribers = new Set<() => void>();
+let globalAnimating = false;
+const startGlobalAnimation = () => {
+    if (globalAnimating) return;
+    globalAnimating = true;
+    const step = () => {
+        if (document.hidden) { // skip updates while hidden
+            requestAnimationFrame(step);
+            return;
+        }
+        for (const fn of animationSubscribers) fn();
+        requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+};
+if (typeof window !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+        // When back visible we ensure loop running
+        if (!document.hidden) startGlobalAnimation();
+    });
+}
+
+// Douglas-Peucker polyline simplification to limit stored path points
+function simplify(coords: LatLngTuple[], tolerance = 1e-5, maxPoints = 300): LatLngTuple[] {
+    if (coords.length <= maxPoints) return coords;
+    // Basic DP implementation
+    const sqTol = tolerance * tolerance;
+    const keep = new Array(coords.length).fill(false);
+    keep[0] = keep[coords.length - 1] = true;
+    type Segment = { first: number; last: number };
+    const stack: Segment[] = [{ first: 0, last: coords.length - 1 }];
+    const sqSegDist = (p: LatLngTuple, a: LatLngTuple, b: LatLngTuple) => {
+        let x = a[0]; let y = a[1];
+        let dx = b[0] - x; let dy = b[1] - y;
+        if (dx !== 0 || dy !== 0) {
+            const t = ((p[0] - x) * dx + (p[1] - y) * dy) / (dx * dx + dy * dy);
+            if (t > 1) { x = b[0]; y = b[1]; }
+            else if (t > 0) { x += dx * t; y += dy * t; }
+        }
+        dx = p[0] - x; dy = p[1] - y;
+        return dx * dx + dy * dy;
+    };
+    while (stack.length) {
+        const { first, last } = stack.pop()!;
+        let maxSqDist = 0; let index = -1;
+        for (let i = first + 1; i < last; i++) {
+            const sqDist = sqSegDist(coords[i], coords[first], coords[last]);
+            if (sqDist > maxSqDist) { index = i; maxSqDist = sqDist; }
+        }
+        if (maxSqDist > sqTol && index !== -1) {
+            keep[index] = true;
+            stack.push({ first, last: index }, { first: index, last });
+        }
+    }
+    const simplified: LatLngTuple[] = [];
+    for (let i = 0; i < coords.length; i++) if (keep[i]) simplified.push(coords[i]);
+    // If still too many points, downsample evenly
+    if (simplified.length > maxPoints) {
+        const stepSize = simplified.length / maxPoints;
+        const reduced: LatLngTuple[] = [];
+        for (let i = 0; i < maxPoints; i++) {
+            reduced.push(simplified[Math.floor(i * stepSize)]);
+        }
+        return reduced;
+    }
+    return simplified;
+}
+
 const Vehicle: React.FC<VehicleProps> = ({
                                              routeShortName,
                                              coordinates,
@@ -64,7 +133,9 @@ const Vehicle: React.FC<VehicleProps> = ({
     }, [map, zoomFromProps]);
 
     const cache = useMemo(() => {
-        let coords = (coordinates || []).map(c => [Number(c[0]), Number(c[1])] as LatLngTuple);
+        let coords = (coordinates || []).map(c => [Number(c[0]), Number(c[1])] as LatLngTuple).filter(c => Number.isFinite(c[0]) && Number.isFinite(c[1]));
+        // Simplify to cap memory & distance calc arrays
+        coords = simplify(coords, 5e-6, 300);
         const prelimStopIndices: number[] = [];
         const stopTimesSec: (number | null)[] = [];
 
@@ -115,15 +186,15 @@ const Vehicle: React.FC<VehicleProps> = ({
             }
         }
 
-        const cumDist: number[] = [0];
+        const cumDistArr: number[] = [0];
         for (let i = 1; i < coords.length; i++) {
             const a = coords[i - 1];
             const b = coords[i];
             const dx = a[0] - b[0];
             const dy = a[1] - b[1];
-            cumDist[i] = cumDist[i - 1] + Math.sqrt(dx * dx + dy * dy);
+            cumDistArr[i] = cumDistArr[i - 1] + Math.sqrt(dx * dx + dy * dy);
         }
-
+        const cumDist = new Float32Array(cumDistArr);
         return { coords, stopIndices, stopTimesSec, segments, cumDist };
     }, [coordinates, stopTimes]);
 
@@ -196,24 +267,31 @@ const Vehicle: React.FC<VehicleProps> = ({
     const handleMouseOut = useCallback(() => setHovered(false), []);
 
     useEffect(() => {
-        const animate = () => {
+        // Register global animation callback instead of per-component RAF loop
+        const update = () => {
             const date = new Date();
             const secondsNow = getEffectiveNowSec(date);
             const p = computePositionForSeconds(secondsNow);
-            if (p && markerRef.current) markerRef.current.setLatLng(p);
-            else if (p) setPosition(p);
-            requestAnimationFrame(animate);
+            if (p) {
+                if (markerRef.current) markerRef.current.setLatLng(p);
+                else setPosition(p); // initial mount fallback
+            }
         };
-        const rafId = requestAnimationFrame(animate);
-        return () => cancelAnimationFrame(rafId);
-    }, [computePositionForSeconds, firstNonNull, lastNonNull, getEffectiveNowSec]);
+        animationSubscribers.add(update);
+        startGlobalAnimation();
+        return () => {
+            animationSubscribers.delete(update);
+        };
+    }, [computePositionForSeconds, getEffectiveNowSec]);
 
     const now = new Date();
     const effectiveNowSec = getEffectiveNowSec(now);
     const active = firstNonNull !== null && lastNonNull !== null &&
         effectiveNowSec >= firstNonNull && effectiveNowSec <= lastNonNull;
 
-    if (!active) return null;
+    // NOTE: Do NOT early-return based on `active` before all hooks have run.
+    // Doing so would change hook order between renders and trigger React warnings.
+    // We compute sizing/icon regardless, and conditionally render null at the end.
 
     const computeFontSize = (text: string, diameter: number) => {
         const maxFont = diameter / 2;
@@ -231,32 +309,17 @@ const Vehicle: React.FC<VehicleProps> = ({
     const styleStr =
         `width:${diameter}px;height:${diameter}px;background-color:white;color:${color};font-size:${fontSize}px;font-weight:bold;display:flex;align-items:center;justify-content:center;border-radius:50%;border:2px solid ${color};box-shadow:0 0 3px rgba(0,0,0,0.3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`;
 
-    const icon = new L.DivIcon({
+    const icon = useMemo(() => new L.DivIcon({
         html: `<div style="${styleStr}">${routeShortName || ""}</div>`,
         className: "",
         iconSize: [diameter, diameter],
         iconAnchor: [diameter / 2, diameter / 2],
-    });
+    }), [styleStr, diameter, routeShortName]);
 
-    if (!position && coordinates && coordinates.length > 0) {
-        return (
-            <Marker
-                ref={markerRef}
-                position={coordinates[0]}
-                icon={icon}
-                eventHandlers={{
-                    click: onClick ? () => onClick() : undefined,
-                    mouseover: handleMouseOver,
-                    mouseout: handleMouseOut,
-                }}
-            />
-        );
-    }
-
-    return (
+    return active ? (
         <Marker
             ref={markerRef}
-            position={position as LatLngTuple}
+            position={(position || coordinates[0]) as LatLngTuple}
             icon={icon}
             eventHandlers={{
                 click: onClick ? () => onClick() : undefined,
@@ -264,7 +327,7 @@ const Vehicle: React.FC<VehicleProps> = ({
                 mouseout: handleMouseOut,
             }}
         />
-    );
+    ) : null;
 };
 
 export default Vehicle;
