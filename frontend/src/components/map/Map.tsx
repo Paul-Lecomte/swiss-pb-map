@@ -116,6 +116,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
 
     // Maintain last bbox route ids to compute diffs and avoid re-rendering same features
     const lastBboxRoutesRef = useRef<Set<string>>(new Set());
+    const prevBboxRef = useRef<number[] | null>(null);
 
     // Streaming concurrency/queueing control
     const isStreamingRef = useRef(false);
@@ -166,9 +167,28 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
         routeLineOpenRef.current = !!selectedRoute;
     }, [selectedRoute]);
 
+    // Remove any cached routes that are not relevant to the new bbox before starting a fresh stream
+    const pruneCacheForNewBbox = (bbox: number[]) => {
+        const cache = routesCacheRef.current;
+        const newKey = bbox.join(',');
+        let changed = false;
+        for (const [id, entry] of cache.entries()) {
+            if (!entry.bboxes.some(b => b.join(',') === newKey)) {
+                cache.delete(id);
+                changed = true;
+            }
+        }
+        if (changed) setRoutes(Array.from(cache.values()).map(c => c.route));
+    };
+
     const requestRoutes = async (bbox: number[], zoom: number) => {
-        if (routeLineOpenRef.current) return; // Blocage des appels API routes
-        if (isStreamingRef.current) return; // Nouveau: on ignore totalement tant que le chargement en cours n'est pas fini
+        if (routeLineOpenRef.current) return; // skip if route detail panel open
+        // Abort any in-flight stream so we don't keep piling data
+        if (isStreamingRef.current && streamAbortRef.current) {
+            try { streamAbortRef.current.abort(); } catch {}
+            isStreamingRef.current = false;
+        }
+        pruneCacheForNewBbox(bbox);
         isStreamingRef.current = true;
         try {
             await loadRoutesStreaming(bbox, zoom);
@@ -178,11 +198,14 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
     };
 
     const loadRoutesStreaming = async (bbox: number[], zoom: number) => {
-        if (routeLineOpenRef.current) return; // Blocage des appels API routes
+        if (routeLineOpenRef.current) return; // safety
         const bboxKey = bbox.join("\,");
         const cachedRoutes = Array.from(routesCacheRef.current.values());
         const alreadyCached = cachedRoutes.length > 0 && cachedRoutes.every(c => c.bboxes.some(b => b.join("\,") === bboxKey));
-        if (alreadyCached) return;
+        if (alreadyCached) {
+            prevBboxRef.current = bbox;
+            return;
+        }
         const knownIds = Array.from(routesCacheRef.current.keys());
         const expandedBbox = expandBbox(bbox, 0.1);
         const scheduleFlush = () => {
@@ -194,6 +217,9 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
             });
         };
         const maxTripsByZoom = zoom >= 15 ? 50 : zoom >= 13 ? 50 : 50;
+        // Setup abort controller for this stream
+        const abortController = new AbortController();
+        streamAbortRef.current = abortController;
 
         if (routeWorkerRef.current) {
             setStreamInfo({ received: 0, loading: true });
@@ -319,7 +345,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                 evictCacheIfNeeded(bbox);
               },
               {
-                signal: undefined,
+                signal: abortController.signal,
                 knownIds,
                 includeStatic: true,
                 maxTrips: maxTripsByZoom,
@@ -336,10 +362,11 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                 }
             }
             lastBboxRoutesRef.current = returnedThisCall;
+            prevBboxRef.current = bbox;
             setRoutes(Array.from(routesCacheRef.current.values()).map(c => c.route));
         } catch (e: any) {
             if (e?.name === 'AbortError' || e?.message?.includes('aborted')) {
-                // ignore
+                // aborted due to new bbox request; clear in-flight partial data not in new bbox
             } else {
                 console.error('[Map] streamRoutesInBbox failed', e);
             }
