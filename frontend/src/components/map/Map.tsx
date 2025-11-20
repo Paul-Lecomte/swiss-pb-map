@@ -17,9 +17,7 @@ import RouteInfoPanel from "@/components/routeinfopanel/RouteInfoPanel";
 import Vehicle from "@/components/vehicle/Vehicle";
 import { LayerState } from "../layer_option/LayerOption";
 import StreamProgress from "@/components/progress/StreamProgress";
-// Ajout import URL pour worker
-// @ts-expect-error - import.meta.url usage for worker URL (only in client build)
-const routeStreamWorkerUrl = typeof window !== 'undefined' ? new URL('../../workers/routeStreamWorker.js', import.meta.url) : null;
+
 
 // Layer visibility state type
 type LayerKeys = "railway" | "stations" | "tram" | "bus" | "trolleybus" | "ferry" | "backgroundPois";
@@ -64,15 +62,6 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
         return () => window.removeEventListener("app:layer-visibility", handler as EventListener);
     }, [layersVisible, setLayersVisible]);
 
-    // Helper debounce function
-    function debounce<F extends (...args: any[]) => void>(fn: F, delay: number) {
-        let timeout: ReturnType<typeof setTimeout>;
-        return (...args: Parameters<F>) => {
-            if (timeout) clearTimeout(timeout);
-            timeout = setTimeout(() => fn(...args), delay);
-        };
-    }
-
     // Expand a bbox by a relative ratio (e.g. 0.1 = 10%)
     function expandBbox(bbox: number[], ratio: number): number[] {
         const [minLng, minLat, maxLng, maxLat] = bbox;
@@ -90,7 +79,35 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
         }
     };
 
-    const routesCacheRef = useRef<Map<string, { route: any; bboxes: number[][] }>>(new Map());
+    const routesCacheRef = useRef<Map<string, { route: any; bboxes: number[][]; lastAccess: number }>>(new Map());
+    const MAX_ROUTE_CACHE_ENTRIES = 400; // hard cap to avoid memory overuse
+    const TARGET_ROUTE_CACHE_ENTRIES = 300; // shrink-to size after eviction
+    // Cache eviction helper (LRU-ish prioritizing entries outside current bbox)
+    const evictCacheIfNeeded = (currentBbox?: number[]) => {
+        const cache = routesCacheRef.current;
+        if (cache.size <= MAX_ROUTE_CACHE_ENTRIES) return;
+        const currentKey = currentBbox ? currentBbox.join(',') : null;
+        const entries = [...cache.entries()].map(([id, entry]) => ({
+            id,
+            lastAccess: entry.lastAccess || 0,
+            hasCurrentBbox: currentKey ? entry.bboxes.some(b => b.join(',') === currentKey) : false
+        })).sort((a,b) => a.lastAccess - b.lastAccess);
+        // First pass: remove oldest not in current bbox
+        for (const e of entries) {
+            if (cache.size <= TARGET_ROUTE_CACHE_ENTRIES) break;
+            if (!e.hasCurrentBbox) cache.delete(e.id);
+        }
+        // Second pass: if still too big, remove oldest regardless
+        if (cache.size > TARGET_ROUTE_CACHE_ENTRIES) {
+            for (const e of entries) {
+                if (cache.size <= TARGET_ROUTE_CACHE_ENTRIES) break;
+                if (cache.has(e.id)) cache.delete(e.id);
+            }
+        }
+        // Update rendered routes after eviction
+        setRoutes(Array.from(cache.values()).map(c => c.route));
+    };
+
     const streamAbortRef = useRef<AbortController | null>(null);
     // Nouveau: référence vers worker
     const routeWorkerRef = useRef<Worker | null>(null);
@@ -102,6 +119,37 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
 
     // Streaming concurrency/queueing control
     const isStreamingRef = useRef(false);
+
+    // Clear caches and abort streams on tab close / navigation away / prolonged hidden
+    useEffect(() => {
+        const handleUnload = () => {
+            try { if (streamAbortRef.current) streamAbortRef.current.abort(); } catch {}
+            try { routesCacheRef.current.clear(); } catch {}
+            setRoutes([]);
+        };
+        const handleVisibility = () => {
+            if (document.hidden) {
+                // After 60s hidden, clear to free memory
+                const timeoutId = setTimeout(() => {
+                    if (document.hidden) {
+                        try { routesCacheRef.current.clear(); } catch {}
+                        setRoutes([]);
+                    }
+                }, 60000);
+                // If user returns earlier, cancel
+                const cancel = () => clearTimeout(timeoutId);
+                document.addEventListener('visibilitychange', cancel, { once: true });
+            }
+        };
+        window.addEventListener('beforeunload', handleUnload);
+        window.addEventListener('pagehide', handleUnload);
+        document.addEventListener('visibilitychange', handleVisibility);
+        return () => {
+            window.removeEventListener('beforeunload', handleUnload);
+            window.removeEventListener('pagehide', handleUnload);
+            document.removeEventListener('visibilitychange', handleVisibility);
+        };
+    }, []);
 
     // Abort ongoing stream on unmount only
     useEffect(() => {
@@ -187,12 +235,14 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                                 const entry = routesCacheRef.current.get(id)!;
                                 entry.route = feature.geometry ? feature : { ...feature, geometry: entry.route.geometry };
                                 if (!entry.bboxes.some(b => b.join("\,") === bboxKey)) entry.bboxes.push(bbox);
+                                entry.lastAccess = Date.now();
                             } else {
-                                routesCacheRef.current.set(id, { route: feature, bboxes: [bbox] });
+                                routesCacheRef.current.set(id, { route: feature, bboxes: [bbox], lastAccess: Date.now() });
                             }
                         }
                         scheduleFlush();
                         setStreamInfo(prev => ({ ...prev, received: prev.received + msg.features.length }));
+                        evictCacheIfNeeded(bbox);
                     } else if (msg.type === 'end') {
                         setStreamInfo(prev => ({ ...prev, loading: false, elapsedMs: msg.data.elapsedMs }));
                         worker.removeEventListener('message', onMessage);
@@ -260,11 +310,13 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                     const entry = routesCacheRef.current.get(id)!;
                     entry.route = feature.geometry ? feature : { ...feature, geometry: entry.route.geometry };
                     if (!entry.bboxes.some(b => b.join("\,") === bboxKey)) entry.bboxes.push(bbox);
+                    entry.lastAccess = Date.now();
                 } else {
-                    routesCacheRef.current.set(id, { route: feature, bboxes: [bbox] });
+                    routesCacheRef.current.set(id, { route: feature, bboxes: [bbox], lastAccess: Date.now() });
                 }
                 scheduleFlush();
                 setStreamInfo(prev => ({ ...prev, received: prev.received + 1 }));
+                evictCacheIfNeeded(bbox);
               },
               {
                 signal: undefined,
