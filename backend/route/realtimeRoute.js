@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getTripUpdates, getInterpolatedRealtime } = require('../controller/realtimeController');
+const { getTripUpdates, getInterpolatedRealtime, getTripUpdatesByTripIds } = require('../controller/realtimeController');
 
 // @desc     Get parsed GTFS-RT TripUpdates
 // @route    GET /api/realtime/trip-updates
@@ -12,5 +12,14 @@ router.get('/trip-updates', getTripUpdates);
 // @access   public
 router.get('/interpolated', getInterpolatedRealtime);
 
-module.exports = router;
+// @desc     Get parsed GTFS-RT TripUpdates by trip IDs
+// @route    POST /api/realtime/trip-updates/by-trip
+// @access   public
+router.post('/trip-updates/by-trip', getTripUpdatesByTripIds);
 
+// @desc     Get parsed GTFS-RT TripUpdates by trip IDs
+// @route    GET /api/realtime/trip-updates/by-trip
+// @access   public
+router.get('/trip-updates/by-trip', getTripUpdatesByTripIds);
+
+module.exports = router;
