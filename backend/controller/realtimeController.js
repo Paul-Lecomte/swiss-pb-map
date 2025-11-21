@@ -1,6 +1,6 @@
 const asyncHandler = require('express-async-handler');
 const { DateTime } = require('luxon');
-const { getParsedTripUpdates, gtfsHhmmssToSeconds } = require('../utils/gtfsRealTime');
+const { getParsedTripUpdates, gtfsHhmmssToSeconds, filterTripUpdatesByIds } = require('../utils/gtfsRealTime');
 const ProcessedRoute = require('../model/processedRoutesModel');
 const ProcessedStopTimes = require('../model/processedStopTimesModel');
 const { mapStopsToGeometry, interpolateBetweenCoords, computeProgress } = require('../utils/interpolation');
@@ -179,4 +179,19 @@ const getInterpolatedRealtime = asyncHandler(async (req, res) => {
     res.json({ type: 'FeatureCollection', features, meta: { isRealtime, fetchedAt, routeCount: routes.length, featureCount: features.length } });
 });
 
-module.exports = { getTripUpdates, getInterpolatedRealtime };
+// Endpoint: trip updates by tripIds
+const getTripUpdatesByTripIds = asyncHandler(async (req, res) => {
+    const body = req.method === 'GET' ? req.query : req.body;
+    let tripIds = body.tripIds || body.tripids || body.ids;
+    if (typeof tripIds === 'string') {
+        try { tripIds = JSON.parse(tripIds); } catch {}
+    }
+    if (!Array.isArray(tripIds) || tripIds.length === 0) {
+        return res.status(400).json({ error: 'tripIds required (array)' });
+    }
+    const { isRealtime, fetchedAt, tripUpdates, isCached, cacheAgeMs, isStale, rateLimited, error } = await getParsedTripUpdates();
+    const filtered = filterTripUpdatesByIds(tripUpdates, tripIds);
+    res.json({ isRealtime, isCached, isStale, cacheAgeMs, rateLimited, error, fetchedAt, tripUpdatesCount: filtered.length, tripUpdates: filtered });
+});
+
+module.exports = { getTripUpdates, getInterpolatedRealtime, getTripUpdatesByTripIds };
