@@ -11,6 +11,7 @@ import ZoomControl from "../zoom/ZoomControl";
 import { fetchStopsInBbox } from "../../services/StopsApiCalls";
 import MapLayerSwitcher, { layers } from "../maplayerswitcher/MapLayerSwitcher";
 import { streamRoutesInBbox } from "../../services/RouteApiCalls";
+import { realtimeUpdatesByTripIds } from "../../services/RealtimeApiCalls";
 import RouteLine from "@/components//route_line/RouteLine";
 import Search from "@/components/search/Search";
 import RouteInfoPanel from "@/components/routeinfopanel/RouteInfoPanel";
@@ -635,6 +636,67 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
     const showAllRoutes = layersVisible.showRoutes;
     const showAllVehicles = layersVisible.showVehicles;
 
+    // Realtime data state
+    const [rtData, setRtData] = useState<any>(null);
+    const rtTimerRef = useRef<number | null>(null);
+    const inFlightRtRef = useRef<boolean>(false);
+    const visibleTripIdsRef = useRef<string[]>([]);
+    const lastTripHashRef = useRef<string>('');
+    const lastCallAtRef = useRef<number>(0);
+
+    // Met à jour la liste des tripIds visibles à chaque changement de routes visibles (pas d'appel réseau ici)
+    useEffect(() => {
+        const tripIds = new Set<string>();
+        const currentVisible = (visibleRoutes as any[]) || [];
+        for (const route of currentVisible) {
+            const schedules = route?.properties?.trip_schedules as Array<{ trip_id: string }> | undefined;
+            if (Array.isArray(schedules)) {
+                for (const sch of schedules) {
+                    if (sch?.trip_id) tripIds.add(sch.trip_id);
+                }
+            }
+        }
+        const ids = Array.from(tripIds);
+        visibleTripIdsRef.current = ids;
+    }, [visibleRoutes]);
+
+    // Polling 15s stable (indépendant des changements de routes)
+    useEffect(() => {
+        async function tick() {
+            if (inFlightRtRef.current) return;
+            const now = Date.now();
+            // Throttle dur local: quoi qu'il arrive, pas plus fréquent que 15s
+            if (now - lastCallAtRef.current < 15000) return;
+            inFlightRtRef.current = true;
+            try {
+                if (document.hidden) return; // réduit la charge si onglet caché
+                const ids = visibleTripIdsRef.current || [];
+                const hash = ids.length ? ids.slice().sort().join(',') : '';
+                // Si mêmes ids et dernier appel il y a <15s, on saute
+                if (hash === lastTripHashRef.current && (now - lastCallAtRef.current) < 15000) return;
+                // purge ancienne data uniquement si on a des ids à demander
+                if (!ids || ids.length === 0) {
+                    setRtData({ isRealtime: false, fetchedAt: null, tripUpdatesCount: 0, tripUpdates: [] });
+                } else {
+                    setRtData(null);
+                    const data = await realtimeUpdatesByTripIds(ids);
+                    setRtData(data);
+                }
+                lastTripHashRef.current = hash;
+                lastCallAtRef.current = Date.now();
+            } catch (e) {
+                console.error('[Map] realtime filtered fetch error', e);
+                lastCallAtRef.current = Date.now();
+            } finally {
+                inFlightRtRef.current = false;
+            }
+        }
+        // premier tick immédiat, puis toutes les 15s
+        tick();
+        rtTimerRef.current = window.setInterval(tick, 15000);
+        return () => { if (rtTimerRef.current) window.clearInterval(rtTimerRef.current); };
+    }, []);
+
     return (
         <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", zIndex: 0 }}>
             <div style={{
@@ -810,6 +872,23 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                     if (layer) setTileLayer(layer);
                 }} />
             </MapContainer>
+            {/* Overlay état realtime */}
+            {rtData && (
+                <div style={{
+                    position:'absolute',
+                    top:16,
+                    right:16,
+                    background: rtData.isRealtime ? '#2a9d8f' : '#e76f51',
+                    color:'#fff',
+                    padding:'6px 10px',
+                    borderRadius:4,
+                    fontSize:12,
+                    zIndex:120,
+                    boxShadow:'0 2px 4px rgba(0,0,0,0.25)'
+                }}>
+                    <strong>Realtime</strong> {rtData.isRealtime ? 'LIVE' : (rtData.isStale ? 'STALE' : 'CACHE')} · {rtData.tripUpdatesCount ?? 0} updates · age {rtData.cacheAgeMs ? Math.round(rtData.cacheAgeMs/1000)+'s' : '0s'}{rtData.rateLimited ? ' · RL' : ''}
+                </div>
+            )}
         </div>
     );
 };
