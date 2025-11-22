@@ -162,9 +162,14 @@ const Vehicle: React.FC<VehicleProps> = ({
             if (typeof s.stop_sequence === 'number') {
                 const rt = rtMap.get(s.stop_sequence);
                 if (rt) {
-                    // Priorité aux times temps réel si non null
                     const realSecs = rt.departureTimeSecs ?? rt.arrivalTimeSecs;
-                    if (realSecs != null) baseSecs = realSecs; else if (rt.departureDelaySecs != null && baseSecs != null) baseSecs = baseSecs + rt.departureDelaySecs;
+                    if (realSecs != null) {
+                        baseSecs = realSecs;
+                    } else if (rt.departureDelaySecs != null && baseSecs != null) {
+                        baseSecs = baseSecs + rt.departureDelaySecs;
+                    } else if (rt.arrivalDelaySecs != null && baseSecs != null) {
+                        baseSecs = baseSecs + rt.arrivalDelaySecs; // nouveau fallback sur arrivalDelay
+                    }
                 }
             }
             stopTimesSec.push(baseSecs);
@@ -291,48 +296,12 @@ const Vehicle: React.FC<VehicleProps> = ({
         return computePositionForSeconds(secondsNow);
     });
 
-    useEffect(() => {
-        // Register global animation callback instead of per-component RAF loop
-        const update = () => {
-            const now = new Date();
-            const secondsNowFloat = getEffectiveNowSecHighRes(now);
-            const target = computePositionForSeconds(secondsNowFloat);
-            if (!target) return;
-            const current = displayedPosRef.current;
-            if (!current) {
-                displayedPosRef.current = target;
-                if (markerRef.current) markerRef.current.setLatLng(target); else setPosition(target);
-                return;
-            }
-            // Exponential smoothing towards target for micro-frame interpolation
-            const smoothing = 0.18; // trade-off between responsiveness & smoothness
-            const newLat = current[0] + (target[0] - current[0]) * smoothing;
-            const newLon = current[1] + (target[1] - current[1]) * smoothing;
-            const newPos: LatLngTuple = [newLat, newLon];
-            displayedPosRef.current = newPos;
-            if (markerRef.current) markerRef.current.setLatLng(newPos); else setPosition(newPos);
-        };
-        animationSubscribers.add(update);
-        startGlobalAnimation();
-        return () => { animationSubscribers.delete(update); };
-    }, [computePositionForSeconds, getEffectiveNowSecHighRes]);
+    // État hover remis ici avant utilisation plus bas
+    const [hovered, setHovered] = useState(false);
+    const handleMouseOver = useCallback(() => setHovered(true), []);
+    const handleMouseOut = useCallback(() => setHovered(false), []);
 
-    const computeFontSize = (text: string, diameter: number) => {
-        const maxFont = diameter / 2;
-        return Math.min(maxFont, diameter / Math.max(text.length, 1));
-    };
-
-    const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
-    const baseDiameter = clamp(8 + 1.2 * (zoomLevelState - 10), 8, 22);
-
-    const scale = 1; // plus de hover scale
-    const diameter = baseDiameter; // keep constant; visual size changes via transform only
-    const fontSize = routeShortName ? computeFontSize(routeShortName, diameter) : Math.max(8, Math.floor(diameter / 2));
-
-    // Subtle box-shadow expansion on hover
-    const boxShadow = "0 0 3px rgba(0,0,0,0.3)";
-
-    // Analyse temps réel courant (dernier stop passé ou prochain)
+    // Calcul du retard/avance courant déplacé avant l'effet d'animation
     const computeCurrentDelaySecs = useCallback((): number | null => {
         if (!realtimeStopTimeUpdates || realtimeStopTimeUpdates.length === 0) return null;
         const now = new Date();
@@ -351,6 +320,62 @@ const Vehicle: React.FC<VehicleProps> = ({
     }, [realtimeStopTimeUpdates, getEffectiveNowSecHighRes]);
     const currentDelaySecs = computeCurrentDelaySecs();
 
+    // Fonction de scaling temporel pour adapter la vitesse au retard/avance
+    const computeScaledTime = useCallback((secondsNowFloat: number) => {
+        if (currentDelaySecs == null || firstNonNull == null || lastNonNull == null) return secondsNowFloat;
+        const totalDuration = lastNonNull - firstNonNull;
+        if (totalDuration <= 0) return secondsNowFloat;
+        let elapsed = secondsNowFloat - firstNonNull;
+        if (elapsed < 0) elapsed = 0; else if (elapsed > totalDuration) elapsed = totalDuration;
+        const denom = Math.max(30, totalDuration + currentDelaySecs); // garde positif
+        const factor = totalDuration / denom; // <1 ralentit (retard), >1 accélère (avance)
+        const scaledElapsed = elapsed * factor;
+        return firstNonNull + scaledElapsed;
+    }, [currentDelaySecs, firstNonNull, lastNonNull]);
+
+    useEffect(() => {
+        // Register global animation callback instead of per-component RAF loop
+        const update = () => {
+            const now = new Date();
+            const secondsNowFloat = getEffectiveNowSecHighRes(now);
+            const interpTime = computeScaledTime(secondsNowFloat);
+            const target = computePositionForSeconds(interpTime);
+            if (!target) return;
+            const current = displayedPosRef.current;
+            if (!current) {
+                displayedPosRef.current = target;
+                if (markerRef.current) markerRef.current.setLatLng(target); else setPosition(target);
+                return;
+            }
+            const smoothing = 0.18;
+            const newLat = current[0] + (target[0] - current[0]) * smoothing;
+            const newLon = current[1] + (target[1] - current[1]) * smoothing;
+            const newPos: LatLngTuple = [newLat, newLon];
+            displayedPosRef.current = newPos;
+            if (markerRef.current) markerRef.current.setLatLng(newPos); else setPosition(newPos);
+        };
+        animationSubscribers.add(update);
+        startGlobalAnimation();
+        return () => { animationSubscribers.delete(update); };
+    }, [computePositionForSeconds, getEffectiveNowSecHighRes, computeScaledTime]);
+
+    const computeFontSize = (text: string, diameter: number) => {
+        const maxFont = diameter / 2;
+        return Math.min(maxFont, diameter / Math.max(text.length, 1));
+    };
+
+    const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+    const baseDiameter = clamp(8 + 1.2 * (zoomLevelState - 10), 8, 22);
+
+    const hoverScale = 2.2; // facteur d'agrandissement au survol
+    const scale = hovered ? hoverScale : 1;
+    const diameter = baseDiameter; // keep constant; visual size changes via transform only
+    const fontSize = routeShortName ? computeFontSize(routeShortName, diameter) : Math.max(8, Math.floor(diameter / 2));
+
+    // Subtle box-shadow expansion on hover
+    const boxShadow = "0 0 3px rgba(0,0,0,0.3)";
+
+    // Analyse temps réel courant (dernier stop passé ou prochain)
     const delayClassColor = (() => {
         if (currentDelaySecs == null) return null;
         if (currentDelaySecs > 120) return '#d32f2f';
@@ -376,7 +401,7 @@ const Vehicle: React.FC<VehicleProps> = ({
     };
 
     const borderColor = delayClassColor || color;
-    const styleStr = `position:relative;width:${diameter}px;height:${diameter}px;background-color:white;color:${color};font-size:${fontSize}px;font-weight:bold;display:flex;align-items:center;justify-content:center;border-radius:50%;border:2px solid ${borderColor};box-shadow:${boxShadow};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;will-change:transform,box-shadow;transform:scale(${scale});transition:transform 0.9s cubic-bezier(.33,1,.68,1),box-shadow 0.6s cubic-bezier(.33,1,.68,1),border-color 0.6s;`;
+    const styleStr = `position:relative;width:${diameter}px;height:${diameter}px;background-color:white;color:${color};font-size:${fontSize}px;font-weight:bold;display:flex;align-items:center;justify-content:center;border-radius:50%;border:2px solid ${borderColor};box-shadow:${boxShadow};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;will-change:transform,box-shadow;transform:scale(${scale});transition:transform 0.45s cubic-bezier(.33,1,.68,1),box-shadow 0.45s, border-color 0.6s;`;
     const needsPulse = currentDelaySecs != null && Math.abs(currentDelaySecs) > 300;
     const pulseKeyframes = needsPulse ? `<style>@keyframes vehPulse{0%{box-shadow:0 0 3px rgba(0,0,0,.3);}50%{box-shadow:0 0 10px ${borderColor};}100%{box-shadow:0 0 3px rgba(0,0,0,.3);}}</style>` : '';
     const sideDelayLabelHtml = (currentDelaySecs != null)
@@ -395,12 +420,14 @@ const Vehicle: React.FC<VehicleProps> = ({
             position={position}
             icon={icon}
             interactive={!!onClick}
-            eventHandlers={onClick ? {
+            eventHandlers={{
                 click: (e: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
                     e.originalEvent.stopPropagation();
-                    onClick();
+                    if (onClick) onClick();
                 },
-            } : undefined}
+                mouseover: handleMouseOver,
+                mouseout: handleMouseOut,
+            }}
             zIndexOffset={1000}
         />
     );
