@@ -117,14 +117,14 @@ function simplify(coords: LatLngTuple[], tolerance = 1e-5, maxPoints = 300): Lat
 }
 
 const Vehicle: React.FC<VehicleProps> = ({
-    routeShortName,
-    coordinates,
-    stopTimes,
-    color = "#FF4136",
-    onClick,
-    zoomLevel: zoomFromProps,
-    realtimeStopTimeUpdates,
-}) => {
+                                             routeShortName,
+                                             coordinates,
+                                             stopTimes,
+                                             color = "#FF4136",
+                                             onClick,
+                                             zoomLevel: zoomFromProps,
+                                             realtimeStopTimeUpdates,
+                                         }) => {
     const markerRef = useRef<LeafletMarker | null>(null);
     // High-res displayed position smoothing ref (does NOT store history)
     const displayedPosRef = useRef<LatLngTuple | null>(null);

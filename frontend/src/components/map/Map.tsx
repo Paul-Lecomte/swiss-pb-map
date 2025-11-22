@@ -318,56 +318,56 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
             setStreamInfo({ received: 0, loading: true });
             const returnedThisCall = new Set<string>();
             await streamRoutesInBbox(
-              bbox,
-              zoom,
-              (feature) => {
-                const id = feature.properties?.route_id || `${feature.properties?.route_short_name}-${feature.properties?.route_long_name}`;
-                if (!id) return;
-                returnedThisCall.add(id);
-                const coords = feature.geometry?.coordinates || [];
-                let intersects = false;
-                if (Array.isArray(coords) && coords.length) {
-                    intersects = coords.some((c: any) => {
-                        const lon = Number(c[0]);
-                        const lat = Number(c[1]);
-                        return Number.isFinite(lat) && Number.isFinite(lon)
-                          && lon >= expandedBbox[0] && lon <= expandedBbox[2]
-                          && lat >= expandedBbox[1] && lat <= expandedBbox[3];
-                    });
-                } else if (routesCacheRef.current.has(id)) {
-                    const cached = routesCacheRef.current.get(id)!.route;
-                    const cc = cached.geometry?.coordinates || [];
-                    intersects = Array.isArray(cc) && cc.some((c: any) => {
-                        const lon = Number(c[0]);
-                        const lat = Number(c[1]);
-                        return Number.isFinite(lat) && Number.isFinite(lon)
-                          && lon >= expandedBbox[0] && lon <= expandedBbox[2]
-                          && lat >= expandedBbox[1] && lat <= expandedBbox[3];
-                    });
+                bbox,
+                zoom,
+                (feature) => {
+                    const id = feature.properties?.route_id || `${feature.properties?.route_short_name}-${feature.properties?.route_long_name}`;
+                    if (!id) return;
+                    returnedThisCall.add(id);
+                    const coords = feature.geometry?.coordinates || [];
+                    let intersects = false;
+                    if (Array.isArray(coords) && coords.length) {
+                        intersects = coords.some((c: any) => {
+                            const lon = Number(c[0]);
+                            const lat = Number(c[1]);
+                            return Number.isFinite(lat) && Number.isFinite(lon)
+                                && lon >= expandedBbox[0] && lon <= expandedBbox[2]
+                                && lat >= expandedBbox[1] && lat <= expandedBbox[3];
+                        });
+                    } else if (routesCacheRef.current.has(id)) {
+                        const cached = routesCacheRef.current.get(id)!.route;
+                        const cc = cached.geometry?.coordinates || [];
+                        intersects = Array.isArray(cc) && cc.some((c: any) => {
+                            const lon = Number(c[0]);
+                            const lat = Number(c[1]);
+                            return Number.isFinite(lat) && Number.isFinite(lon)
+                                && lon >= expandedBbox[0] && lon <= expandedBbox[2]
+                                && lat >= expandedBbox[1] && lat <= expandedBbox[3];
+                        });
+                    }
+                    if (!intersects) return;
+                    if (routesCacheRef.current.has(id)) {
+                        const entry = routesCacheRef.current.get(id)!;
+                        entry.route = feature.geometry ? feature : { ...feature, geometry: entry.route.geometry };
+                        if (!entry.bboxes.some(b => b.join("\,") === bboxKey)) entry.bboxes.push(bbox);
+                        entry.lastAccess = Date.now();
+                    } else {
+                        routesCacheRef.current.set(id, { route: feature, bboxes: [bbox], lastAccess: Date.now() });
+                    }
+                    scheduleFlush();
+                    setStreamInfo(prev => ({ ...prev, received: prev.received + 1 }));
+                    evictCacheIfNeeded(bbox);
+                },
+                {
+                    signal: abortController.signal,
+                    knownIds,
+                    includeStatic: true,
+                    maxTrips: maxTripsByZoom,
+                    concurrency: 10,
+                    onlyNew: true,
+                    onMeta: (m) => setStreamInfo(prev => ({ ...prev, total: m.filteredRoutes ?? m.totalRoutes })),
+                    onEnd: (e) => setStreamInfo(prev => ({ ...prev, loading: false, elapsedMs: e.elapsedMs }))
                 }
-                if (!intersects) return;
-                if (routesCacheRef.current.has(id)) {
-                    const entry = routesCacheRef.current.get(id)!;
-                    entry.route = feature.geometry ? feature : { ...feature, geometry: entry.route.geometry };
-                    if (!entry.bboxes.some(b => b.join("\,") === bboxKey)) entry.bboxes.push(bbox);
-                    entry.lastAccess = Date.now();
-                } else {
-                    routesCacheRef.current.set(id, { route: feature, bboxes: [bbox], lastAccess: Date.now() });
-                }
-                scheduleFlush();
-                setStreamInfo(prev => ({ ...prev, received: prev.received + 1 }));
-                evictCacheIfNeeded(bbox);
-              },
-              {
-                signal: abortController.signal,
-                knownIds,
-                includeStatic: true,
-                maxTrips: maxTripsByZoom,
-                concurrency: 10,
-                onlyNew: true,
-                onMeta: (m) => setStreamInfo(prev => ({ ...prev, total: m.filteredRoutes ?? m.totalRoutes })),
-                onEnd: (e) => setStreamInfo(prev => ({ ...prev, loading: false, elapsedMs: e.elapsedMs }))
-              }
             );
             const prevIds = lastBboxRoutesRef.current;
             for (const oldId of prevIds) {
@@ -808,18 +808,18 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                             const dir = Number(schedules[idx]?.direction_id) || 0;
                             if (dir === 1) {
                                 return stops.map((_: any, i: number) => {
-                                     const ri = stops.length - 1 - i;
-                                     const s = stops[ri];
-                                     const pair = schedules[idx]?.times?.[ri];
-                                     return {
-                                         stop_id: s.stop_id,
-                                         stop_lat: s.stop_lat,
-                                         stop_lon: s.stop_lon,
-                                         arrival_time: Array.isArray(pair) ? toTime(pair[0] ?? null) : pair?.arrival_time,
-                                         departure_time: Array.isArray(pair) ? toTime(pair[1] ?? null) : pair?.departure_time,
-                                         stop_sequence: s.stop_sequence,
-                                     };
-                                 });
+                                    const ri = stops.length - 1 - i;
+                                    const s = stops[ri];
+                                    const pair = schedules[idx]?.times?.[ri];
+                                    return {
+                                        stop_id: s.stop_id,
+                                        stop_lat: s.stop_lat,
+                                        stop_lon: s.stop_lon,
+                                        arrival_time: Array.isArray(pair) ? toTime(pair[0] ?? null) : pair?.arrival_time,
+                                        departure_time: Array.isArray(pair) ? toTime(pair[1] ?? null) : pair?.departure_time,
+                                        stop_sequence: s.stop_sequence,
+                                    };
+                                });
                             }
                             return stops.map((s: any, stopIdx: number) => {
                                 const pair = schedules[idx]?.times?.[stopIdx];
