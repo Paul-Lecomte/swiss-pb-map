@@ -33,6 +33,8 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
     const [routes, setRoutes] = useState<any[]>([]);
     const mapRef = useRef<any>(null);
     const [selectedRoute, setSelectedRoute] = useState<any | null>(null);
+    const [selectedTripIndex, setSelectedTripIndex] = useState<number | null>(null);
+    const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
 
     // Ajout pour le highlight
     const [highlightedRouteId, setHighlightedRouteId] = useState<string | null>(null);
@@ -40,11 +42,22 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
     const handleRouteClick = (route: any) => {
         setSelectedRoute(route);
         setHighlightedRouteId(route.properties?.route_id || `${route.properties?.route_short_name}-${route.properties?.route_long_name}`);
+        setSelectedTripIndex(null);
+        setSelectedTripId(null);
+    };
+
+    const handleVehicleClick = (route: any, vehicleIdx: number, tripId?: string) => {
+        setSelectedRoute(route);
+        setHighlightedRouteId(route.properties?.route_id || `${route.properties?.route_short_name}-${route.properties?.route_long_name}`);
+        setSelectedTripIndex(vehicleIdx);
+        setSelectedTripId(tripId ?? null);
     };
 
     const handleCloseRoutePanel = () => {
         setSelectedRoute(null);
         setHighlightedRouteId(null);
+        setSelectedTripIndex(null);
+        setSelectedTripId(null);
     };
 
     // Remove app:layer-visibility listeners — Header will update layersVisible directly
@@ -697,6 +710,11 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
         return () => { if (rtTimerRef.current) window.clearInterval(rtTimerRef.current); };
     }, []);
 
+    const selectedRealtimeTripUpdate = useMemo(() => {
+        if (!selectedTripId || !rtData?.tripUpdates) return null;
+        return rtData.tripUpdates.find((tu: any) => tu?.trip?.tripId === selectedTripId) || null;
+    }, [selectedTripId, rtData]);
+
     return (
         <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", zIndex: 0 }}>
             <div style={{
@@ -751,7 +769,6 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                     const fullRoute = routesCacheRef.current.get(id)?.route || route;
                     const coords = fullRoute.geometry?.coordinates || [];
                     if (!coords || coords.length < 2) return null;
-
                     const positions = coords
                         .map((c: any) => {
                             const lon = Number(c[0]);
@@ -760,13 +777,11 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                             return null;
                         })
                         .filter(Boolean) as [number, number][];
-
                     const stops = fullRoute.properties?.stops || [];
-
-                    // Determine vehicles from either stop_times at first stop or compact trip_schedules
                     let vehicleCount = 0;
                     let getStopTimesForVehicle: (idx: number) => any[] = () => [];
                     let coordsForVehicle: ((idx: number) => [number, number][]) | null = null;
+                    let getTripIdForVehicle: ((idx: number) => string | undefined) | null = null;
                     if (stops[0]?.stop_times && Array.isArray(stops[0].stop_times)) {
                         vehicleCount = stops[0].stop_times.length;
                         getStopTimesForVehicle = (idx: number) => stops.map((s: any) => ({
@@ -777,6 +792,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                             departure_time: s.stop_times?.[idx]?.departure_time,
                             stop_sequence: s.stop_sequence,
                         }));
+                        getTripIdForVehicle = () => undefined;
                     } else if (Array.isArray(fullRoute.properties?.trip_schedules)) {
                         const schedules = fullRoute.properties.trip_schedules as Array<{ trip_id: string; times: any[]; direction_id?: number }>;
                         vehicleCount = schedules.length;
@@ -791,7 +807,6 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                         getStopTimesForVehicle = (idx: number) => {
                             const dir = Number(schedules[idx]?.direction_id) || 0;
                             if (dir === 1) {
-                                // reverse: align times and stops in reverse order
                                 return stops.map((_: any, i: number) => {
                                      const ri = stops.length - 1 - i;
                                      const s = stops[ri];
@@ -806,7 +821,6 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                                      };
                                  });
                             }
-                            // forward
                             return stops.map((s: any, stopIdx: number) => {
                                 const pair = schedules[idx]?.times?.[stopIdx];
                                 return {
@@ -819,20 +833,17 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                                 };
                             });
                         };
-                        // Attach per-vehicle coordinates orientation using direction_id
                         coordsForVehicle = (idx: number) => (schedules[idx]?.direction_id === 1 ? [...positions].reverse() : positions);
+                        getTripIdForVehicle = (idx: number) => schedules[idx]?.trip_id;
                     }
-
                     return Array.from({ length: vehicleCount }).map((_: unknown, idx: number) => {
                         const stopTimesForVehicle = getStopTimesForVehicle(idx);
-                        const validStopTimesCount = stopTimesForVehicle.filter(
-                            (st: any) => st.arrival_time || st.departure_time
-                        ).length;
+                        const validStopTimesCount = stopTimesForVehicle.filter((st: any) => st.arrival_time || st.departure_time).length;
                         if (validStopTimesCount < 2) return null;
-
-                        // pick coords considering direction if available
                         const coordsForThis = coordsForVehicle ? coordsForVehicle(idx) : positions;
-
+                        const tripIdForThis = getTripIdForVehicle ? getTripIdForVehicle(idx) : undefined;
+                        const realtimeUpdateForThisTrip = tripIdForThis && rtData?.tripUpdates ? rtData.tripUpdates.find((tu: any) => tu?.trip?.tripId === tripIdForThis) : null;
+                        const realtimeStopTimeUpdates = realtimeUpdateForThisTrip?.stopTimeUpdates || null;
                         return (
                             <Vehicle
                                 key={`veh-${id}-${idx}`}
@@ -842,8 +853,9 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                                 stopTimes={stopTimesForVehicle}
                                 color={fullRoute.properties?.route_color || "#264653"}
                                 isRunning={true}
-                                onClick={() => handleRouteClick(fullRoute)}
+                                onClick={() => handleVehicleClick(fullRoute, idx, tripIdForThis)}
                                 zoomLevel={zoom}
+                                realtimeStopTimeUpdates={realtimeStopTimeUpdates}
                             />
                         );
                     });
@@ -853,6 +865,9 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                     <RouteInfoPanel
                         route={selectedRoute}
                         onClose={handleCloseRoutePanel}
+                        selectedTripIndex={selectedTripIndex ?? undefined}
+                        selectedTripId={selectedTripId ?? undefined}
+                        realtimeTripUpdate={selectedRealtimeTripUpdate ?? undefined}
                     />
                 )}
 

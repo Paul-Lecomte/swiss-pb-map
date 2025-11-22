@@ -22,7 +22,7 @@ interface RoutePropsShape {
     route_short_name: string;
     route_long_name?: string;
     trip_headsign: string;
-    trip_schedules?: Array<{ trip_id: string; times: any[] }>; // optional compact format
+    trip_schedules?: Array<{ trip_id: string; times: any[]; direction_id?: number }>; // optional compact format
 }
 
 interface Route {
@@ -30,22 +30,29 @@ interface Route {
     properties: RoutePropsShape;
 }
 
+interface RealtimeTripUpdate {
+    trip?: { tripId?: string };
+    stopTimeUpdates?: Array<{ stopId: string; stopSequence: number; arrivalDelaySecs: number | null; departureDelaySecs: number | null; arrivalTimeSecs: number | null; departureTimeSecs: number | null }>;
+}
+
 interface RouteInfoPanelProps {
     route: Route | null;
     onClose: () => void;
+    selectedTripIndex?: number;
+    selectedTripId?: string;
+    realtimeTripUpdate?: RealtimeTripUpdate; // nouvel objet temps réel pour le trip sélectionné
 }
 
-const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose }) => {
+const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose, selectedTripIndex, selectedTripId, realtimeTripUpdate }) => {
     const routeId = route?.route_id || route?.properties?.route_id || "";
 
-    // Ensure stops have stop_times: rebuild from trip_schedules if necessary
+    // Ensure stops have stop_times: rebuild from trip_schedules if necessary (en gérant la direction)
     const normalizedStops = useMemo(() => {
         if (!route?.properties?.stops) return [] as Stop[];
         const stops = route.properties.stops.map(s => ({ ...s }));
         const schedules = route.properties.trip_schedules;
         const hasStopTimes = stops.some(s => Array.isArray(s.stop_times) && s.stop_times.length > 0);
         if (schedules && schedules.length && !hasStopTimes) {
-            // Build stop_times[vehicleIdx] per stop from compact schedules
             const byStop: StopTime[][] = stops.map(() => []);
             const toTime = (sec: number | null) => {
                 if (sec == null || !isFinite(sec)) return undefined;
@@ -55,25 +62,21 @@ const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose }) => {
                 const pad = (n: number) => String(n).padStart(2, '0');
                 return `${pad(h)}:${pad(m)}:${pad(s)}`;
             };
+            const N = stops.length;
             for (let v = 0; v < schedules.length; v++) {
                 const times = schedules[v].times || [];
-                for (let i = 0; i < stops.length; i++) {
-                    const pair = times[i];
-                    if (Array.isArray(pair)) {
-                        byStop[i].push({
-                            arrival_time: toTime(pair[0] ?? null),
-                            departure_time: toTime(pair[1] ?? null),
-                            stop_sequence: stops[i].stop_sequence
-                        });
-                    } else if (pair && typeof pair === 'object') {
-                        byStop[i].push({
-                            arrival_time: pair.arrival_time,
-                            departure_time: pair.departure_time,
-                            stop_sequence: stops[i].stop_sequence
-                        });
-                    } else {
-                        byStop[i].push({ stop_sequence: stops[i].stop_sequence });
-                    }
+                const dir = Number(schedules[v]?.direction_id) || 0;
+                for (let i = 0; i < N; i++) {
+                    const idx = dir === 1 ? (N - 1 - i) : i;
+                    const s = stops[idx];
+                    const pair = times[idx];
+                    const rec: StopTime = {
+                        arrival_time: Array.isArray(pair) ? toTime(pair[0] ?? null) : pair?.arrival_time,
+                        departure_time: Array.isArray(pair) ? toTime(pair[1] ?? null) : pair?.departure_time,
+                        stop_sequence: s.stop_sequence
+                    };
+                    // injecte l'enregistrement sur le stop dans l'ordre d'affichage (idx)
+                    byStop[idx].push(rec);
                 }
             }
             for (let i = 0; i < stops.length; i++) stops[i].stop_times = byStop[i];
@@ -81,16 +84,51 @@ const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose }) => {
         return stops;
     }, [route]);
 
+    // Déterminer l'index du trip à afficher: priorité à selectedTripId, sinon selectedTripIndex, sinon 0
+    const selectedIndex = useMemo(() => {
+        if (!route) return 0;
+        const schedules = route.properties?.trip_schedules;
+        if (selectedTripId && Array.isArray(schedules) && schedules.length) {
+            const idx = schedules.findIndex(s => s.trip_id === selectedTripId);
+            if (idx >= 0) return idx;
+        }
+        if (typeof selectedTripIndex === 'number' && isFinite(selectedTripIndex)) {
+            return Math.max(0, Math.floor(selectedTripIndex));
+        }
+        return 0;
+    }, [route, selectedTripId, selectedTripIndex]);
+
+    // Ordonner les stops selon la direction du trip sélectionné (si connue)
+    const stopsToRender = useMemo(() => {
+        const stops = normalizedStops;
+        const schedules = route?.properties?.trip_schedules;
+        if (!stops || !stops.length) return [] as Stop[];
+        if (Array.isArray(schedules) && schedules[selectedIndex]) {
+            const dir = Number(schedules[selectedIndex]?.direction_id) || 0;
+            if (dir === 1) return [...stops].reverse();
+        }
+        return stops;
+    }, [normalizedStops, route, selectedIndex]);
+
+    // Map realtime updates par stopSequence => delay
+    const realtimeBySequence = useMemo(() => {
+        const m = new Map<number, { arrivalDelay: number | null; departureDelay: number | null }>();
+        const ups = realtimeTripUpdate?.stopTimeUpdates || [];
+        for (const up of ups) {
+            m.set(up.stopSequence, { arrivalDelay: up.arrivalDelaySecs, departureDelay: up.departureDelaySecs });
+        }
+        return m;
+    }, [realtimeTripUpdate]);
+
     useEffect(() => {
         if (route) {
             console.log("[RouteInfoPanel] route data:", route);
             console.log("[RouteInfoPanel] stops:", normalizedStops);
+            console.log("[RouteInfoPanel] selected index:", selectedIndex, "selectedTripId:", selectedTripId);
         }
-    }, [route, normalizedStops]);
+    }, [route, normalizedStops, selectedIndex, selectedTripId]);
 
     if (!route) return null;
-
-    const stops = normalizedStops;
 
     const delayColors = {
         late2: "text-red-600",
@@ -145,34 +183,40 @@ const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose }) => {
                 <div className="absolute left-[35%] sm:left-[25%] top-0 bottom-0 w-[2px] bg-blue-600 rounded-full z-0" />
 
                 <ul className="list-none p-0 m-0 relative">
-                    {stops.map((stop, i) => {
-                        const stopTime = stop.stop_times?.[0];
-                        const key = stopTime
-                            ? `${stop.stop_id}-${stopTime.stop_sequence ?? i}`
-                            : `${stop.stop_id}-${i}`;
-
+                    {stopsToRender.map((stop, i) => {
+                        const times = stop.stop_times || [];
+                        const st = times[selectedIndex] || times.find(t => t?.arrival_time || t?.departure_time) || times[0];
+                        const key = st ? `${stop.stop_id}-${st.stop_sequence ?? i}` : `${stop.stop_id}-${i}`;
+                        // delay temps réel – priorité departure sinon arrival
+                        const rt = realtimeBySequence.get(st?.stop_sequence ?? -999);
+                        const effectiveDelay = rt?.departureDelay ?? rt?.arrivalDelay ?? st?.delay;
+                        // classification
+                        const delayClass = (() => {
+                            if (effectiveDelay == null) return 'missing';
+                            if (effectiveDelay > 180) return 'late2';
+                            if (effectiveDelay > 60) return 'late1';
+                            if (effectiveDelay < -180) return 'early2';
+                            if (effectiveDelay < -60) return 'early1';
+                            return 'onTime';
+                        })();
+                        const formatDelay = (d?: number | null) => {
+                            if (d == null) return '+0m';
+                            const sign = d >= 0 ? '+' : '-';
+                            const mins = Math.round(Math.abs(d) / 60);
+                            return `${sign}${mins}m`;
+                        };
                         return (
                             <li key={key} className="relative flex items-center my-4 z-10">
-                                {/* Left info */}
                                 <div className="flex flex-col items-end text-[0.9em] w-[12%] pr-2">
-                                    {stopTime && (
+                                    {st && (
                                         <>
-                                            <span className={`font-semibold ${getDelayClass(stopTime.delay)}`}>
-                                                {formatDelay(stopTime.delay)}
-                                            </span>
-                                            <span className="text-gray-600">{stopTime.arrival_time || "00:00"}</span>
-                                            <span className="text-gray-400 text-[0.75em]">{stopTime.departure_time || ""}</span>
+                                            <span className={`font-semibold ${getDelayClass(effectiveDelay ?? undefined)}`}>{formatDelay(effectiveDelay)}</span>
+                                            <span className="text-gray-600">{st.arrival_time || "--:--"}</span>
+                                            <span className="text-gray-400 text-[0.75em]">{st.departure_time || ""}</span>
                                         </>
                                     )}
                                 </div>
-
-                                {/* Center dot */}
-                                <div
-                                    className="absolute bg-white border-2 border-blue-600 rounded-full w-[10px] h-[10px] z-10"
-                                    style={{ left: "21%", transform: "translateX(-50%)" }}
-                                />
-
-                                {/* Stop name */}
+                                <div className="absolute bg-white border-2 border-blue-600 rounded-full w-[10px] h-[10px] z-10" style={{ left: "21%", transform: "translateX(-50%)" }} />
                                 <div className="flex-1 ml-13">
                                     <span className="text-gray-900 text-[0.95em]">{stop.stop_name}</span>
                                 </div>

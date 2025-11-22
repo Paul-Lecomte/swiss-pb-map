@@ -15,6 +15,15 @@ interface StopTime {
     stop_lon?: number;
 }
 
+interface RealtimeStopTimeUpdate {
+    stopId: string;
+    stopSequence: number;
+    arrivalTimeSecs: number | null;
+    departureTimeSecs: number | null;
+    arrivalDelaySecs: number | null;
+    departureDelaySecs: number | null;
+}
+
 interface VehicleProps {
     routeId: string;
     routeShortName?: string;
@@ -24,6 +33,7 @@ interface VehicleProps {
     isRunning?: boolean;
     onClick?: () => void;
     zoomLevel?: number;
+    realtimeStopTimeUpdates?: RealtimeStopTimeUpdate[] | null; // ajout temps réel spécifique à ce trip
 }
 
 const parseGtfsTime = (s?: unknown): number | null => {
@@ -113,6 +123,7 @@ const Vehicle: React.FC<VehicleProps> = ({
     color = "#FF4136",
     onClick,
     zoomLevel: zoomFromProps,
+    realtimeStopTimeUpdates,
 }) => {
     const markerRef = useRef<LeafletMarker | null>(null);
     // High-res displayed position smoothing ref (does NOT store history)
@@ -136,15 +147,29 @@ const Vehicle: React.FC<VehicleProps> = ({
 
     const cache = useMemo(() => {
         let coords = (coordinates || []).map(c => [Number(c[0]), Number(c[1])] as LatLngTuple).filter(c => Number.isFinite(c[0]) && Number.isFinite(c[1]));
-        // Simplify to cap memory & distance calc arrays
         coords = simplify(coords, 5e-6, 300);
         const prelimStopIndices: number[] = [];
         const stopTimesSec: (number | null)[] = [];
-
+        // Fusion des horaires statiques + temps réel
+        const rtMap = new Map<number, RealtimeStopTimeUpdate>();
+        (realtimeStopTimeUpdates || []).forEach(up => {
+            // stopSequence est déjà number
+            rtMap.set(up.stopSequence, up);
+        });
         for (const s of (stopTimes || [])) {
+            const baseTimeStr = s.departure_time || s.arrival_time || undefined;
+            let baseSecs = parseGtfsTime(baseTimeStr);
+            if (typeof s.stop_sequence === 'number') {
+                const rt = rtMap.get(s.stop_sequence);
+                if (rt) {
+                    // Priorité aux times temps réel si non null
+                    const realSecs = rt.departureTimeSecs ?? rt.arrivalTimeSecs;
+                    if (realSecs != null) baseSecs = realSecs; else if (rt.departureDelaySecs != null && baseSecs != null) baseSecs = baseSecs + rt.departureDelaySecs;
+                }
+            }
+            stopTimesSec.push(baseSecs);
             const lat = Number(s.stop_lat);
             const lon = Number(s.stop_lon);
-            stopTimesSec.push(parseGtfsTime(s.arrival_time ?? s.departure_time ?? undefined));
             if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
                 prelimStopIndices.push(-1);
                 continue;
@@ -153,19 +178,13 @@ const Vehicle: React.FC<VehicleProps> = ({
             let bestD = Infinity;
             for (let i = 0; i < coords.length; i++) {
                 const d = dist2(coords[i], [lat, lon]);
-                if (d < bestD) {
-                    bestD = d;
-                    bestIdx = i;
-                }
+                if (d < bestD) { bestD = d; bestIdx = i; }
             }
             prelimStopIndices.push(bestIdx);
         }
-
         const firstValidIdx = prelimStopIndices.find(idx => idx >= 0);
         const lastValidIdx = [...prelimStopIndices].reverse().find(idx => idx >= 0);
-        const isReversedGeom =
-            typeof firstValidIdx === "number" && typeof lastValidIdx === "number" && firstValidIdx > lastValidIdx;
-
+        const isReversedGeom = typeof firstValidIdx === "number" && typeof lastValidIdx === "number" && firstValidIdx > lastValidIdx;
         let stopIndices: number[];
         if (isReversedGeom) {
             const n = coords.length;
@@ -174,7 +193,6 @@ const Vehicle: React.FC<VehicleProps> = ({
         } else {
             stopIndices = prelimStopIndices;
         }
-
         type Seg = { startIdx: number; endIdx: number; startSec: number; endSec: number };
         const segments: Seg[] = [];
         for (let i = 0; i < stopIndices.length - 1; i++) {
@@ -187,18 +205,17 @@ const Vehicle: React.FC<VehicleProps> = ({
                 if (a !== b) segments.push({ startIdx: a, endIdx: b, startSec: as as number, endSec: bs as number });
             }
         }
-
         const cumDistArr: number[] = [0];
         for (let i = 1; i < coords.length; i++) {
-            const a = coords[i - 1];
-            const b = coords[i];
-            const dx = a[0] - b[0];
-            const dy = a[1] - b[1];
+            const A = coords[i - 1];
+            const B = coords[i];
+            const dx = A[0] - B[0];
+            const dy = A[1] - B[1];
             cumDistArr[i] = cumDistArr[i - 1] + Math.sqrt(dx * dx + dy * dy);
         }
         const cumDist = new Float32Array(cumDistArr);
         return { coords, stopIndices, stopTimesSec, segments, cumDist };
-    }, [coordinates, stopTimes]);
+    }, [coordinates, stopTimes, realtimeStopTimeUpdates]);
 
     const computePositionForSeconds = useCallback((secondsNow: number): LatLngTuple | null => {
         // Accept fractional seconds for smoother interpolation
@@ -274,11 +291,6 @@ const Vehicle: React.FC<VehicleProps> = ({
         return computePositionForSeconds(secondsNow);
     });
 
-    // Hover state and handlers must be declared unconditionally (before any early return)
-    const [hovered, setHovered] = useState(false);
-    const handleMouseOver = useCallback(() => setHovered(true), []);
-    const handleMouseOut = useCallback(() => setHovered(false), []);
-
     useEffect(() => {
         // Register global animation callback instead of per-component RAF loop
         const update = () => {
@@ -305,15 +317,6 @@ const Vehicle: React.FC<VehicleProps> = ({
         return () => { animationSubscribers.delete(update); };
     }, [computePositionForSeconds, getEffectiveNowSecHighRes]);
 
-    const now = new Date();
-    const effectiveNowSec = getEffectiveNowSec(now);
-    const active = firstNonNull !== null && lastNonNull !== null &&
-        effectiveNowSec >= firstNonNull && effectiveNowSec <= lastNonNull;
-
-    // NOTE: Do NOT early-return based on `active` before all hooks have run.
-    // Doing so would change hook order between renders and trigger React warnings.
-    // We compute sizing/icon regardless, and conditionally render null at the end.
-
     const computeFontSize = (text: string, diameter: number) => {
         const maxFont = diameter / 2;
         return Math.min(maxFont, diameter / Math.max(text.length, 1));
@@ -322,39 +325,86 @@ const Vehicle: React.FC<VehicleProps> = ({
     const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
     const baseDiameter = clamp(8 + 1.2 * (zoomLevelState - 10), 8, 22);
 
-    // Smoother hover scale: reduced factor & transform-only animation
-    const hoverScale = 2.5; // gentle scale for subtle effect
-    const scale = hovered ? hoverScale : 1;
+    const scale = 1; // plus de hover scale
     const diameter = baseDiameter; // keep constant; visual size changes via transform only
     const fontSize = routeShortName ? computeFontSize(routeShortName, diameter) : Math.max(8, Math.floor(diameter / 2));
 
     // Subtle box-shadow expansion on hover
-    const boxShadow = hovered
-        ? "0 0 8px 2px rgba(0,0,0,0.18)"
-        : "0 0 3px rgba(0,0,0,0.3)";
+    const boxShadow = "0 0 3px rgba(0,0,0,0.3)";
 
-    // Smooth transform-only transition for gentle grow/shrink
-    const styleStr = `width:${diameter}px;height:${diameter}px;background-color:white;color:${color};font-size:${fontSize}px;font-weight:bold;display:flex;align-items:center;justify-content:center;border-radius:50%;border:1px solid ${color};box-shadow:${boxShadow};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;will-change:transform,box-shadow;transform:scale(${scale});transition:transform 4s cubic-bezier(.33,1,.68,1),box-shadow 0.8s cubic-bezier(.33,1,.68,1);`;
+    // Analyse temps réel courant (dernier stop passé ou prochain)
+    const computeCurrentDelaySecs = useCallback((): number | null => {
+        if (!realtimeStopTimeUpdates || realtimeStopTimeUpdates.length === 0) return null;
+        const now = new Date();
+        const nowSecFloat = getEffectiveNowSecHighRes(now);
+        const enriched = realtimeStopTimeUpdates.map(u => {
+            const time = (u.departureTimeSecs != null ? u.departureTimeSecs : u.arrivalTimeSecs);
+            const delay = (u.departureDelaySecs != null ? u.departureDelaySecs : u.arrivalDelaySecs);
+            return { sequence: u.stopSequence, time, delay };
+        }).filter(e => e.time != null);
+        if (!enriched.length) return null;
+        const past = enriched.filter(e => (e.time as number) <= nowSecFloat).sort((a,b) => (b.time as number) - (a.time as number));
+        if (past.length) return past[0].delay ?? null;
+        const future = enriched.filter(e => (e.time as number) > nowSecFloat).sort((a,b) => (a.time as number) - (b.time as number));
+        if (future.length) return future[0].delay ?? null;
+        return null;
+    }, [realtimeStopTimeUpdates, getEffectiveNowSecHighRes]);
+    const currentDelaySecs = computeCurrentDelaySecs();
 
+    const delayClassColor = (() => {
+        if (currentDelaySecs == null) return null;
+        if (currentDelaySecs > 120) return '#d32f2f';
+        if (currentDelaySecs > 60) return '#f57c00';
+        if (currentDelaySecs > 0) return '#ffa726';
+        if (currentDelaySecs < -120) return '#1565c0';
+        if (currentDelaySecs < -60) return '#1e88e5';
+        if (currentDelaySecs < 0) return '#42a5f5';
+        return '#2e7d32';
+    })();
+
+    const formatDelayLabel = (d: number | null) => {
+        if (d == null) return '';
+        const abs = Math.abs(d);
+        if (abs >= 3600) {
+            const hours = abs / 3600;
+            const hStr = (Math.round(hours * 10) / 10).toFixed(1).replace(/\.0$/, '');
+            return `${d > 0 ? '+' : '-'}${hStr}h`;
+        }
+        if (abs < 60) return `${d > 0 ? '+' : '-'}${abs}s`;
+        const mins = Math.round(abs / 60);
+        return `${d > 0 ? '+' : '-'}${mins}m`;
+    };
+
+    const borderColor = delayClassColor || color;
+    const styleStr = `position:relative;width:${diameter}px;height:${diameter}px;background-color:white;color:${color};font-size:${fontSize}px;font-weight:bold;display:flex;align-items:center;justify-content:center;border-radius:50%;border:2px solid ${borderColor};box-shadow:${boxShadow};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;will-change:transform,box-shadow;transform:scale(${scale});transition:transform 0.9s cubic-bezier(.33,1,.68,1),box-shadow 0.6s cubic-bezier(.33,1,.68,1),border-color 0.6s;`;
+    const needsPulse = currentDelaySecs != null && Math.abs(currentDelaySecs) > 300;
+    const pulseKeyframes = needsPulse ? `<style>@keyframes vehPulse{0%{box-shadow:0 0 3px rgba(0,0,0,.3);}50%{box-shadow:0 0 10px ${borderColor};}100%{box-shadow:0 0 3px rgba(0,0,0,.3);}}</style>` : '';
+    const sideDelayLabelHtml = (currentDelaySecs != null)
+        ? `${pulseKeyframes}<div style=\"position:absolute;top:50%;left:100%;transform:translate(6px,-50%);background:${delayClassColor};color:#fff;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;white-space:nowrap;box-shadow:0 0 4px rgba(0,0,0,0.25);\">${formatDelayLabel(currentDelaySecs)}</div>`
+        : '';
     const icon = useMemo(() => new L.DivIcon({
-        html: `<div style="${styleStr}">${routeShortName || ""}</div>`,
+        html: `<div style='${styleStr}${needsPulse ? "animation:vehPulse 2s infinite;" : ''}'>${routeShortName || ""}${sideDelayLabelHtml}</div>`,
         className: "",
         iconSize: [diameter, diameter],
         iconAnchor: [diameter / 2, diameter / 2],
-    }), [styleStr, diameter, routeShortName]);
+    }), [styleStr, diameter, routeShortName, sideDelayLabelHtml, needsPulse]);
 
-    return active ? (
+    return (
         <Marker
             ref={markerRef}
-            position={(position || coordinates[0]) as LatLngTuple}
+            position={position}
             icon={icon}
-            eventHandlers={{
-                click: onClick ? () => onClick() : undefined,
-                mouseover: handleMouseOver,
-                mouseout: handleMouseOut,
-            }}
+            interactive={!!onClick}
+            eventHandlers={onClick ? {
+                click: (e: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+                    e.originalEvent.stopPropagation();
+                    onClick();
+                },
+            } : undefined}
+            zIndexOffset={1000}
         />
-    ) : null;
+    );
 };
 
 export default Vehicle;
+
