@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { Marker } from "react-leaflet";
-import L, { Marker as LeafletMarker } from "leaflet";
+import L, { Marker as LeafletMarker, TooltipOptions } from "leaflet";
 import { useMap } from "react-leaflet";
 
 type LatLngTuple = [number, number];
@@ -301,7 +301,7 @@ const Vehicle: React.FC<VehicleProps> = ({
     const handleMouseOver = useCallback(() => setHovered(true), []);
     const handleMouseOut = useCallback(() => setHovered(false), []);
 
-    // Calcul du retard/avance courant déplacé avant l'effet d'animation
+    // Calcul du retard/avance courant déplacé avant l’effet d’animation
     const computeCurrentDelaySecs = useCallback((): number | null => {
         if (!realtimeStopTimeUpdates || realtimeStopTimeUpdates.length === 0) return null;
         const now = new Date();
@@ -414,6 +414,44 @@ const Vehicle: React.FC<VehicleProps> = ({
         iconAnchor: [diameter / 2, diameter / 2],
     }), [styleStr, diameter, routeShortName, sideDelayLabelHtml, needsPulse]);
 
+    // Libellé détaillé pour le survol (avance/retard clair)
+    const hoverDelayText = useMemo(() => {
+        if (currentDelaySecs == null) return null;
+        if (currentDelaySecs === 0) return "On time";
+        const abs = Math.abs(currentDelaySecs);
+        if (abs < 60) {
+            return currentDelaySecs > 0 ? `Delay ${abs}s` : `Early ${abs}s`;
+        }
+        const mins = Math.round(abs / 60);
+        return currentDelaySecs > 0 ? `Delay ${mins} min` : `Early ${mins} min`;
+    }, [currentDelaySecs]);
+
+    // Native tooltip on hover
+    useEffect(() => {
+        const marker = markerRef.current;
+        if (!marker) return;
+        try {
+            if (hovered && hoverDelayText) {
+                marker.unbindTooltip();
+                const opts: TooltipOptions = {
+                    direction: 'top',
+                    offset: [0, -Math.ceil(diameter / 2)],
+                    permanent: false,
+                    sticky: true,
+                    opacity: 1,
+                    className: 'vehicle-delay-tooltip',
+                };
+                marker.bindTooltip(hoverDelayText, opts);
+                marker.openTooltip();
+            } else {
+                marker.unbindTooltip();
+            }
+        } catch {}
+        return () => {
+            try { marker?.unbindTooltip(); } catch {}
+        };
+    }, [hovered, hoverDelayText, diameter]);
+
     return (
         <Marker
             ref={markerRef}
@@ -429,7 +467,9 @@ const Vehicle: React.FC<VehicleProps> = ({
                 mouseout: handleMouseOut,
             }}
             zIndexOffset={1000}
-        />
+        >
+            {/* Tooltip handle natively via bindTooltip/unbindTooltip */}
+        </Marker>
     );
 };
 
