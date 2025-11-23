@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { Marker } from "react-leaflet";
-import L, { Marker as LeafletMarker, TooltipOptions } from "leaflet";
+import L, { Marker as LeafletMarker } from "leaflet";
 import { useMap } from "react-leaflet";
 
 type LatLngTuple = [number, number];
@@ -34,6 +34,16 @@ interface VehicleProps {
     onClick?: () => void;
     zoomLevel?: number;
     realtimeStopTimeUpdates?: RealtimeStopTimeUpdate[] | null; // ajout temps réel spécifique à ce trip
+}
+
+// Interface locale pour les options de tooltip
+interface LeafletTooltipOptions {
+    direction?: string;
+    offset?: [number, number];
+    permanent?: boolean;
+    sticky?: boolean;
+    opacity?: number;
+    className?: string;
 }
 
 const parseGtfsTime = (s?: unknown): number | null => {
@@ -414,26 +424,54 @@ const Vehicle: React.FC<VehicleProps> = ({
         iconAnchor: [diameter / 2, diameter / 2],
     }), [styleStr, diameter, routeShortName, sideDelayLabelHtml, needsPulse]);
 
-    // Libellé détaillé pour le survol (avance/retard clair)
-    const hoverDelayText = useMemo(() => {
-        if (currentDelaySecs == null) return null;
-        if (currentDelaySecs === 0) return "On time";
-        const abs = Math.abs(currentDelaySecs);
-        if (abs < 60) {
-            return currentDelaySecs > 0 ? `Delay ${abs}s` : `Early ${abs}s`;
-        }
-        const mins = Math.round(abs / 60);
-        return currentDelaySecs > 0 ? `Delay ${mins} min` : `Early ${mins} min`;
-    }, [currentDelaySecs]);
+    // Progression du trajet (ratio 0-1)
+    const tripProgressPct = useMemo(() => {
+        if (firstNonNull == null || lastNonNull == null) return 0;
+        const now = getEffectiveNowSecHighRes(new Date());
+        const span = lastNonNull - firstNonNull;
+        if (span <= 0) return 0;
+        return Math.min(1, Math.max(0, (now - firstNonNull) / span));
+    }, [firstNonNull, lastNonNull, getEffectiveNowSecHighRes]);
 
-    // Native tooltip on hover
+    // Libellé détaillé pour le survol (avance/retard clair) -> version HTML modernisée
+    const hoverTooltipHtml = useMemo(() => {
+        const baseFont = 'system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif';
+        if (currentDelaySecs == null) {
+            return `<div style="font-family:${baseFont};padding:8px 10px;border-radius:10px;background:#fff;border:1px solid #2e7d32;box-shadow:0 4px 12px rgba(0,0,0,.18);display:flex;align-items:center;gap:8px;min-width:130px;">\n                <span style='width:10px;height:10px;border-radius:50%;background:#2e7d32;box-shadow:0 0 0 4px #2e7d3222;'></span>\n                <span style='font-weight:600;color:#2e7d32;'>On time</span>\n            </div>`;
+        }
+        const delay = currentDelaySecs;
+        const abs = Math.abs(delay);
+        const isLate = delay > 0;
+        const isEarly = delay < 0;
+        const minutes = abs >= 60 ? Math.round(abs / 60) : null;
+        const valueStr = minutes != null ? `${minutes} min` : `${abs}s`;
+        const label = isLate ? `Delay +${valueStr}` : isEarly ? `Early -${valueStr}` : 'On time';
+        const palette = (() => {
+            if (isLate) {
+                if (abs >= 600) return { main: '#b71c1c', light: '#fbe9e7' }; // >10 min
+                if (abs >= 300) return { main: '#d84315', light: '#ffebee' }; // >5 min
+                return { main: '#d32f2f', light: '#ffebee' }; // minor delay
+            }
+            if (isEarly) {
+                if (abs >= 600) return { main: '#0d47a1', light: '#e3f2fd' }; // >10 min early
+                if (abs >= 300) return { main: '#1565c0', light: '#e3f2fd' }; // >5 min early
+                return { main: '#1e88e5', light: '#e3f2fd' }; // minor early
+            }
+            return { main: '#2e7d32', light: '#e8f5e9' };
+        })();
+        const icon = isLate ? '⏳' : isEarly ? '⚡' : '⏱';
+        const grad = `linear-gradient(135deg, ${palette.light} 0%, #ffffff 60%)`;
+        return `<div style="font-family:${baseFont};padding:10px 12px;border-radius:12px;background:${grad};border:1px solid ${palette.main};box-shadow:0 6px 16px rgba(0,0,0,.20);display:flex;flex-direction:column;gap:6px;min-width:170px;">\n            <div style='display:flex;align-items:center;gap:10px;'>\n                <div style='display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:8px;background:${palette.main};color:#fff;font-size:18px;'>${icon}</div>\n                <div style='display:flex;flex-direction:column;gap:2px;'>\n                    <span style='font-weight:600;font-size:14px;color:${palette.main};'>${label}</span>\n                    <span style='font-size:11px;color:#555;letter-spacing:.5px;text-transform:uppercase;'>${routeShortName || 'Trip'}</span>\n                </div>\n            </div>\n            <div style='height:6px;background:#eee;border-radius:4px;overflow:hidden;position:relative;'>\n                <div style='position:absolute;left:0;top:0;height:100%;width:${Math.min(100, Math.max(5, (tripProgressPct||0)*100)).toFixed(1)}%;background:${palette.main};transition:width .6s ease;border-radius:4px;'></div>\n            </div>\n        </div>`;
+    }, [currentDelaySecs, routeShortName, tripProgressPct]);
+
+    // Native tooltip on hover (HTML)
     useEffect(() => {
         const marker = markerRef.current;
         if (!marker) return;
         try {
-            if (hovered && hoverDelayText) {
+            if (hovered && hoverTooltipHtml) {
                 marker.unbindTooltip();
-                const opts: TooltipOptions = {
+                const opts: LeafletTooltipOptions = {
                     direction: 'top',
                     offset: [0, -Math.ceil(diameter / 2)],
                     permanent: false,
@@ -441,16 +479,14 @@ const Vehicle: React.FC<VehicleProps> = ({
                     opacity: 1,
                     className: 'vehicle-delay-tooltip',
                 };
-                marker.bindTooltip(hoverDelayText, opts);
+                marker.bindTooltip(hoverTooltipHtml, opts);
                 marker.openTooltip();
             } else {
                 marker.unbindTooltip();
             }
         } catch {}
-        return () => {
-            try { marker?.unbindTooltip(); } catch {}
-        };
-    }, [hovered, hoverDelayText, diameter]);
+        return () => { try { marker?.unbindTooltip(); } catch {} };
+    }, [hovered, hoverTooltipHtml, diameter]);
 
     return (
         <Marker
