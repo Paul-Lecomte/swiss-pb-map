@@ -433,35 +433,98 @@ const Vehicle: React.FC<VehicleProps> = ({
         return Math.min(1, Math.max(0, (now - firstNonNull) / span));
     }, [firstNonNull, lastNonNull, getEffectiveNowSecHighRes]);
 
-    // Libellé détaillé pour le survol (avance/retard clair) -> version HTML modernisée
+    // Libellé détaillé pour le survol (version moderne, sobre)
     const hoverTooltipHtml = useMemo(() => {
-        const baseFont = 'system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif';
+        const baseFont = 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial';
+
+        // Helpers
+        const formatBadge = (d: number | null) => {
+            if (d == null) return '';
+            return `${d > 0 ? '+' : '-'}${Math.abs(d) >= 60 ? Math.round(Math.abs(d) / 60) + 'm' : Math.abs(d) + 's'}`;
+        };
+
+        // Small neutral svg (clock) — kept minimal to avoid "emoji" look
+        const clockSvg = (color: string) => `
+            <svg width="16" height="16" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10" stroke="${color}" stroke-width="1.5" fill="none" />
+                <path d="M12 7.5v4l2 1" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>`;
+
         if (currentDelaySecs == null) {
-            return `<div style="font-family:${baseFont};padding:8px 10px;border-radius:10px;background:#fff;border:1px solid #2e7d32;box-shadow:0 4px 12px rgba(0,0,0,.18);display:flex;align-items:center;gap:8px;min-width:130px;">\n                <span style='width:10px;height:10px;border-radius:50%;background:#2e7d32;box-shadow:0 0 0 4px #2e7d3222;'></span>\n                <span style='font-weight:600;color:#2e7d32;'>On time</span>\n            </div>`;
+            const accent = '#667C4A';
+            return `
+                <div class="bg-white/95 backdrop-blur-sm border border-gray-200 shadow-sm rounded-xl p-3 w-[260px] text-sm" style="font-family: ${baseFont};">
+                    <div class="flex items-center gap-3">
+                        <div class="flex-none">
+                            <div class="w-10 h-10 rounded-md grid place-items-center" style="background: ${accent}22;">
+                                ${clockSvg(accent)}
+                            </div>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center justify-between gap-2">
+                                <div class="truncate font-medium text-gray-800 text-sm">${routeShortName || 'Trip'}</div>
+                                <div class="text-xs text-gray-400">On time</div>
+                            </div>
+                            <div class="mt-2">
+                                <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                    <div class="h-full rounded-full" style="width: 6%; background: ${accent}; transition: width .6s ease;"></div>
+                                </div>
+                                <div class="mt-1 text-xs text-gray-400">Progress · 6%</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
         }
+
         const delay = currentDelaySecs;
         const abs = Math.abs(delay);
         const isLate = delay > 0;
-        const isEarly = delay < 0;
-        const minutes = abs >= 60 ? Math.round(abs / 60) : null;
-        const valueStr = minutes != null ? `${minutes} min` : `${abs}s`;
-        const label = isLate ? `Delay +${valueStr}` : isEarly ? `Early -${valueStr}` : 'On time';
+        const badgeText = formatBadge(delay);
+        const label = isLate ? `Delay ${badgeText}` : `Early ${badgeText}`;
+
         const palette = (() => {
             if (isLate) {
-                if (abs >= 600) return { main: '#b71c1c', light: '#fbe9e7' }; // >10 min
-                if (abs >= 300) return { main: '#d84315', light: '#ffebee' }; // >5 min
-                return { main: '#d32f2f', light: '#ffebee' }; // minor delay
+                if (abs >= 600) return { main: '#b91c1c', soft: '#fee2e2' };
+                if (abs >= 300) return { main: '#ef4444', soft: '#fee2e2' };
+                return { main: '#f97316', soft: '#fff7ed' };
             }
-            if (isEarly) {
-                if (abs >= 600) return { main: '#0d47a1', light: '#e3f2fd' }; // >10 min early
-                if (abs >= 300) return { main: '#1565c0', light: '#e3f2fd' }; // >5 min early
-                return { main: '#1e88e5', light: '#e3f2fd' }; // minor early
-            }
-            return { main: '#2e7d32', light: '#e8f5e9' };
+            // early / ahead
+            if (abs >= 600) return { main: '#1e3a8a', soft: '#eef2ff' };
+            return { main: '#2563eb', soft: '#eef2ff' };
         })();
-        const icon = isLate ? '⏳' : isEarly ? '⚡' : '⏱';
-        const grad = `linear-gradient(135deg, ${palette.light} 0%, #ffffff 60%)`;
-        return `<div style="font-family:${baseFont};padding:10px 12px;border-radius:12px;background:${grad};border:1px solid ${palette.main};box-shadow:0 6px 16px rgba(0,0,0,.20);display:flex;flex-direction:column;gap:6px;min-width:170px;">\n            <div style='display:flex;align-items:center;gap:10px;'>\n                <div style='display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:8px;background:${palette.main};color:#fff;font-size:18px;'>${icon}</div>\n                <div style='display:flex;flex-direction:column;gap:2px;'>\n                    <span style='font-weight:600;font-size:14px;color:${palette.main};'>${label}</span>\n                    <span style='font-size:11px;color:#555;letter-spacing:.5px;text-transform:uppercase;'>${routeShortName || 'Trip'}</span>\n                </div>\n            </div>\n            <div style='height:6px;background:#eee;border-radius:4px;overflow:hidden;position:relative;'>\n                <div style='position:absolute;left:0;top:0;height:100%;width:${Math.min(100, Math.max(5, (tripProgressPct||0)*100)).toFixed(1)}%;background:${palette.main};transition:width .6s ease;border-radius:4px;'></div>\n            </div>\n        </div>`;
+
+        const iconBg = palette.soft;
+        const iconColor = palette.main;
+        const progress = Math.min(100, Math.max(4, (tripProgressPct || 0) * 100)).toFixed(0);
+
+        return `
+            <div class="bg-white/95 backdrop-blur-sm border border-gray-200 shadow-sm rounded-xl p-3 w-[260px] text-sm" style="font-family: ${baseFont};">
+                <div class="flex items-start gap-3">
+                    <div class="flex-none">
+                        <div class="w-10 h-10 rounded-md grid place-items-center" style="background: ${iconBg};">
+                            ${clockSvg(iconColor)}
+                        </div>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center justify-between gap-2">
+                            <div class="truncate font-medium text-gray-800 text-sm">${routeShortName || 'Trip'}</div>
+                            <div class="flex items-center gap-2">
+                                <div class="text-xs text-gray-400">${label}</div>
+                                <div class="px-2 py-0.5 rounded-md text-xs font-semibold" style="background:${palette.main}; color: #fff; min-width:44px; text-align:center;">${badgeText}</div>
+                            </div>
+                        </div>
+
+                        <div class="mt-3">
+                            <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                <div class="h-full rounded-full" style="width: ${progress}%; background: ${palette.main}; transition: width .6s ease;"></div>
+                            </div>
+                            <div class="mt-1 text-xs text-gray-400">Progress · ${progress}%</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
     }, [currentDelaySecs, routeShortName, tripProgressPct]);
 
     // Native tooltip on hover (HTML)
