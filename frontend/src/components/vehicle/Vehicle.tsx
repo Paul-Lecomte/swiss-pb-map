@@ -1,3 +1,4 @@
+// TODO: use the percentage of trip completed to be realtime accurate
 "use client";
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { Marker } from "react-leaflet";
