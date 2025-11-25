@@ -23,7 +23,7 @@ import StreamProgress from "@/components/progress/StreamProgress";
 // Layer visibility state type
 type LayerKeys = "railway" | "stations" | "tram" | "bus" | "trolleybus" | "ferry" | "backgroundPois";
 
-const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburger: () => void; layersVisible: LayerState; setLayersVisible: React.Dispatch<React.SetStateAction<LayerState>> }) => {
+const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }: { onHamburger: () => void; layersVisible: LayerState; setLayersVisible: React.Dispatch<React.SetStateAction<LayerState>>; optionPrefs?: { showRealtimeOverlay: boolean; showRouteProgress: boolean } }) => {
     const [stops, setStops] = useState<any[]>([]);
     const [zoom, setZoom] = useState(13);
     const [tileLayer, setTileLayer] = useState(layers[0]);
@@ -742,7 +742,9 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                     setMapReady(true);
                 }}
             >
-                <StreamProgress total={streamInfo.total} received={streamInfo.received} elapsedMs={streamInfo.elapsedMs} loading={streamInfo.loading} />
+                {optionPrefs?.showRouteProgress && (
+                    <StreamProgress total={streamInfo.total} received={streamInfo.received} elapsedMs={streamInfo.elapsedMs} loading={streamInfo.loading} />
+                )}
                 <TileLayer url={tileLayer.url} attribution={tileLayer.attribution} maxZoom={tileLayer.maxZoom} maxNativeZoom={tileLayer.maxZoom} />
 
                 <ZoomControl />
@@ -888,7 +890,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible }: { onHamburge
                 }} />
             </MapContainer>
             {/* Overlay état realtime */}
-            {rtData && (
+            {rtData && optionPrefs?.showRealtimeOverlay && (
                 <div style={{
                     position:'absolute',
                     top:16,
