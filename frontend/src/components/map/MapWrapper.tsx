@@ -4,9 +4,21 @@ import React from "react";
 import dynamic from "next/dynamic";
 import { LayerState } from "../layer_option/LayerOption";
 
-const Map = dynamic(() => import("./Map"), { ssr: false });
+const Map = dynamic<{
+    onHamburger: () => void;
+    layersVisible: LayerState;
+    setLayersVisible: React.Dispatch<React.SetStateAction<LayerState>>;
+    optionPrefs?: { showRealtimeOverlay: boolean; showRouteProgress: boolean };
+}>(() => import("./Map"), { ssr: false });
 
-export default function MapWrapper({ onHamburger, layersVisible, setLayersVisible }: { onHamburger: () => void; layersVisible: LayerState; setLayersVisible: React.Dispatch<React.SetStateAction<LayerState>> }) {
+interface MapWrapperProps {
+    onHamburger: () => void;
+    layersVisible: LayerState;
+    setLayersVisible: React.Dispatch<React.SetStateAction<LayerState>>;
+    optionPrefs?: { showRealtimeOverlay: boolean; showRouteProgress: boolean };
+}
+
+export default function MapWrapper({ onHamburger, layersVisible, setLayersVisible, optionPrefs }: MapWrapperProps) {
     return (
         <div
             style={{
@@ -17,7 +29,7 @@ export default function MapWrapper({ onHamburger, layersVisible, setLayersVisibl
                 height: "100vh",
             }}
         >
-            <Map onHamburger={onHamburger} layersVisible={layersVisible} setLayersVisible={setLayersVisible} />
+            <Map onHamburger={onHamburger} layersVisible={layersVisible} setLayersVisible={setLayersVisible} optionPrefs={optionPrefs} />
         </div>
     );
 }
