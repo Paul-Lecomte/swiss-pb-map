@@ -59,7 +59,7 @@ export default function LayerOption({ onClose, state, onChange }: Props) {
   return (
       <Paper elevation={6} sx={{ width: 280, borderRadius: 3, p: 2 }}>
         <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
-          <Typography variant="subtitle1" fontWeight={700}>Options de couches</Typography>
+          <Typography variant="subtitle1" fontWeight={700}>Layer options</Typography>
           <IconButton onClick={onClose} size="small" aria-label="Fermer">
             <CloseIcon />
           </IconButton>
