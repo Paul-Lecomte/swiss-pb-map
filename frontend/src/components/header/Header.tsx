@@ -7,14 +7,16 @@ import Option from "../../components/option/Option";
 import About from "../../components/about/About";
 import "./Header.css";
 
-type Props = {
+interface HeaderProps {
     sideOpen: boolean;
     setSideOpen: (open: boolean) => void;
     layersVisible: LayerState;
     setLayersVisible: React.Dispatch<React.SetStateAction<LayerState>>;
+    optionPrefs?: { showRealtimeOverlay: boolean; showRouteProgress: boolean };
+    setOptionPrefs?: React.Dispatch<React.SetStateAction<{ showRealtimeOverlay: boolean; showRouteProgress: boolean }>>;
 };
 
-const Header = ({ sideOpen, setSideOpen, layersVisible, setLayersVisible }: Props) => {
+const Header: React.FC<HeaderProps> = ({ sideOpen, setSideOpen, layersVisible, setLayersVisible, optionPrefs, setOptionPrefs }) => {
     const [layerOpen, setLayerOpen] = React.useState(false);
     const [stationOpen, setStationOpen] = React.useState(false);
     const [optionOpen, setOptionOpen] = React.useState(false);
@@ -115,7 +117,7 @@ const Header = ({ sideOpen, setSideOpen, layersVisible, setLayersVisible }: Prop
             {/* Option panel */}
             {optionOpen && (
                 <div ref={optionRef} className="header-popup option">
-                    <Option onClose={() => setOptionOpen(false)} />
+                    <Option onClose={() => setOptionOpen(false)} prefs={optionPrefs} setPrefs={setOptionPrefs} />
                 </div>
             )}
 
