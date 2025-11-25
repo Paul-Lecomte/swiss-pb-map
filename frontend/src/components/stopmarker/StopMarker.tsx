@@ -3,9 +3,9 @@ import { Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import "./markerStyles.css";
 
-interface StopPopupProps {
-    stop: any;
-}
+interface RouteInfo { route_short_name?: string; route_id?: string; route_desc?: string; stop_name?: string; }
+interface StopFeature { stop_lat?: number; stop_lon?: number; stop_name?: string; properties?: { stop_name?: string; routes?: RouteInfo[] }; geometry?: { coordinates?: [number, number] }; }
+interface StopPopupProps { stop: StopFeature; }
 
 const busIcon = '/icons/bus_marker.png';
 const metroIcon = '/icons/metro_marker.png';
@@ -25,9 +25,20 @@ const createLeafletIcon = (iconUrl: string) =>
 const StopMarker: React.FC<StopPopupProps> = ({ stop }) => {
     const map = useMap();
 
-    const routeDesc = stop.properties.routes[0].route_desc;
+    // Ensure we have a routes array; if not, skip rendering this marker
+    if (!Array.isArray(stop?.properties?.routes)) {
+        console.debug('[StopMarker] No routes array for stop', stop?.stop_name || stop?.properties?.stop_name || stop);
+        // Early return: insufficient data to render a meaningful marker
+        return null;
+    }
+    // Normalize routes (remove falsy entries)
+    const routes: RouteInfo[] = stop.properties.routes.filter((r: RouteInfo | undefined): r is RouteInfo => !!r);
+    // Pick a primary route with a usable descriptor for icon selection
+    const primaryRoute = routes.find(r => r && (r.route_desc || r.route_short_name)) || routes[0];
+    const routeDesc: string = primaryRoute?.route_desc || primaryRoute?.route_short_name || 'Bus';
 
     const getStopIcon = (desc: string) => {
+        // Map route descriptor to icon category sets
         const trainTypes = new Set([
             'S', 'SN', 'R','TGV',
             'IC', 'IC1', 'IC2', 'IC3', 'IC5', 'IC6', 'IC8', 'IC21',
@@ -36,7 +47,6 @@ const StopMarker: React.FC<StopPopupProps> = ({ stop }) => {
             'S40', 'S41', 'EXT',
             'EC', 'ICE', 'TGV Lyria', 'Thalys'
         ]);
-
         const tramTypes = new Set(['Tram', 'T1','T2','T3','T4','T5','T6','T7','T8']);
         const metroTypes = new Set(['M']);
         const busTypes = new Set(['Bus','B1','B2','B3','B4','B5','B6','B7','B8']);
@@ -49,10 +59,12 @@ const StopMarker: React.FC<StopPopupProps> = ({ stop }) => {
         if (ferryTypes.has(desc)) return createLeafletIcon(ferryIcon);
         if (cableTypes.has(desc)) return createLeafletIcon(cableIcon);
         if (metroTypes.has(desc)) return createLeafletIcon(metroIcon);
-        return createLeafletIcon(busIcon); // fallback
+        return createLeafletIcon(busIcon); // Default fallback icon
     };
 
     const getRouteColor = (route: string) => {
+        // Simple heuristic for color coding by route prefix
+        if (!route) return '#777';
         if (route.startsWith('S')) return '#0078D7';
         if (route.startsWith('IC') || route.startsWith('IR')) return '#E63946';
         if (route.startsWith('RE')) return '#F4A261';
@@ -61,13 +73,18 @@ const StopMarker: React.FC<StopPopupProps> = ({ stop }) => {
         return '#777';
     };
 
-    const lat = Number(stop.stop_lat ?? stop.geometry?.coordinates[1]);
-    const lon = Number(stop.stop_lon ?? stop.geometry?.coordinates[0]);
-    const name = stop.stop_name ?? stop.properties?.stop_name;
-    const routes = stop.properties.routes;
+    // Derive coordinates; skip marker if invalid
+    const latRaw = stop.stop_lat ?? stop.geometry?.coordinates?.[1];
+    const lonRaw = stop.stop_lon ?? stop.geometry?.coordinates?.[0];
+    const lat = typeof latRaw === 'number' ? latRaw : Number(latRaw);
+    const lon = typeof lonRaw === 'number' ? lonRaw : Number(lonRaw);
+    if (!isFinite(lat) || !isFinite(lon)) return null; // Invalid coordinate data
+
+    // Prefer explicit stop name; fallback to properties or primary route
+    const name = stop.stop_name ?? stop.properties?.stop_name ?? primaryRoute?.stop_name ?? 'Unknown stop';
 
     return (
-        <Marker position={[lat, lon]} icon={getStopIcon(routeDesc) as any}>
+        <Marker position={[lat, lon]} icon={getStopIcon(routeDesc)}>
             <Popup>
                 <div className="custom-popup">
                     <button
@@ -78,15 +95,21 @@ const StopMarker: React.FC<StopPopupProps> = ({ stop }) => {
                     </button>
                     <div className="popup-title">{name}</div>
                     <div className="popup-routes">
-                        {routes.map((r: any, i: number) => (
-                            <span
-                                key={`${r.route_short_name}-${i}`}
-                                className="route-badge"
-                                style={{ backgroundColor: getRouteColor(r.route_short_name) }}
-                            >
-                                {r.route_short_name}
-                            </span>
-                        ))}
+                        {routes.length === 0 && (
+                            <span className="route-badge" style={{ backgroundColor: '#777' }}>No routes</span>
+                        )}
+                        {routes.map((r: RouteInfo, i: number) => {
+                            const short = r?.route_short_name || r?.route_id || '?';
+                            return (
+                                <span
+                                    key={`${short}-${i}`}
+                                    className="route-badge"
+                                    style={{ backgroundColor: getRouteColor(String(short)) }}
+                                >
+                                    {short}
+                                </span>
+                            );
+                        })}
                     </div>
                 </div>
             </Popup>
@@ -95,3 +118,4 @@ const StopMarker: React.FC<StopPopupProps> = ({ stop }) => {
 };
 
 export default StopMarker;
+
