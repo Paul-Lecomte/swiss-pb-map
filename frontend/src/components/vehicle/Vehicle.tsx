@@ -160,121 +160,85 @@ const Vehicle: React.FC<VehicleProps> = ({
         let coords = (coordinates || []).map(c => [Number(c[0]), Number(c[1])] as LatLngTuple).filter(c => Number.isFinite(c[0]) && Number.isFinite(c[1]));
         coords = simplify(coords, 5e-6, 300);
         const prelimStopIndices: number[] = [];
-        const stopTimesSec: (number | null)[] = [];
-        // Fusion des horaires statiques + temps réel
+        const originalStopTimesSec: (number | null)[] = [];
+        const adjustedStopTimesSec: (number | null)[] = [];
         const rtMap = new Map<number, RealtimeStopTimeUpdate>();
-        (realtimeStopTimeUpdates || []).forEach(up => {
-            // stopSequence est déjà number
-            rtMap.set(up.stopSequence, up);
-        });
+        (realtimeStopTimeUpdates || []).forEach(up => { rtMap.set(up.stopSequence, up); });
         for (const s of (stopTimes || [])) {
             const baseTimeStr = s.departure_time || s.arrival_time || undefined;
-            let baseSecs = parseGtfsTime(baseTimeStr);
+            const baseSecs = parseGtfsTime(baseTimeStr);
+            originalStopTimesSec.push(baseSecs);
+            let adjustedSecs = baseSecs;
             if (typeof s.stop_sequence === 'number') {
                 const rt = rtMap.get(s.stop_sequence);
                 if (rt) {
                     const realSecs = rt.departureTimeSecs ?? rt.arrivalTimeSecs;
-                    if (realSecs != null) {
-                        baseSecs = realSecs;
-                    } else if (rt.departureDelaySecs != null && baseSecs != null) {
-                        baseSecs = baseSecs + rt.departureDelaySecs;
-                    } else if (rt.arrivalDelaySecs != null && baseSecs != null) {
-                        baseSecs = baseSecs + rt.arrivalDelaySecs; // nouveau fallback sur arrivalDelay
+                    if (realSecs != null) adjustedSecs = realSecs; else {
+                        const depDelay = rt.departureDelaySecs;
+                        const arrDelay = rt.arrivalDelaySecs;
+                        if (depDelay != null && adjustedSecs != null) adjustedSecs = adjustedSecs + depDelay;
+                        else if (arrDelay != null && adjustedSecs != null) adjustedSecs = adjustedSecs + arrDelay;
                     }
                 }
             }
-            stopTimesSec.push(baseSecs);
+            adjustedStopTimesSec.push(adjustedSecs);
             const lat = Number(s.stop_lat);
             const lon = Number(s.stop_lon);
-            if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-                prelimStopIndices.push(-1);
-                continue;
-            }
-            let bestIdx = -1;
-            let bestD = Infinity;
-            for (let i = 0; i < coords.length; i++) {
-                const d = dist2(coords[i], [lat, lon]);
-                if (d < bestD) { bestD = d; bestIdx = i; }
-            }
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) { prelimStopIndices.push(-1); continue; }
+            let bestIdx = -1; let bestD = Infinity;
+            for (let i = 0; i < coords.length; i++) { const d = dist2(coords[i], [lat, lon]); if (d < bestD) { bestD = d; bestIdx = i; } }
             prelimStopIndices.push(bestIdx);
         }
         const firstValidIdx = prelimStopIndices.find(idx => idx >= 0);
         const lastValidIdx = [...prelimStopIndices].reverse().find(idx => idx >= 0);
-        const isReversedGeom = typeof firstValidIdx === "number" && typeof lastValidIdx === "number" && firstValidIdx > lastValidIdx;
+        const isReversedGeom = typeof firstValidIdx === 'number' && typeof lastValidIdx === 'number' && firstValidIdx > lastValidIdx;
         let stopIndices: number[];
         if (isReversedGeom) {
-            const n = coords.length;
-            coords = [...coords].reverse();
+            const n = coords.length; coords = [...coords].reverse();
             stopIndices = prelimStopIndices.map(idx => (idx >= 0 ? (n - 1 - idx) : -1));
-        } else {
-            stopIndices = prelimStopIndices;
-        }
+        } else stopIndices = prelimStopIndices;
         type Seg = { startIdx: number; endIdx: number; startSec: number; endSec: number };
-        const segments: Seg[] = [];
+        const originalSegments: Seg[] = [];
         for (let i = 0; i < stopIndices.length - 1; i++) {
-            let a = stopIndices[i];
-            let b = stopIndices[i + 1];
-            const as = stopTimesSec[i];
-            const bs = stopTimesSec[i + 1];
-            if (a >= 0 && b >= 0 && as != null && bs != null && bs >= as) {
-                if (a > b) [a, b] = [b, a];
-                if (a !== b) segments.push({ startIdx: a, endIdx: b, startSec: as as number, endSec: bs as number });
-            }
+            let a = stopIndices[i]; let b = stopIndices[i+1];
+            const as = originalStopTimesSec[i]; const bs = originalStopTimesSec[i+1];
+            if (a >= 0 && b >= 0 && as != null && bs != null && bs >= as) { if (a > b) [a,b] = [b,a]; if (a !== b) originalSegments.push({ startIdx:a, endIdx:b, startSec:as as number, endSec:bs as number }); }
         }
         const cumDistArr: number[] = [0];
-        for (let i = 1; i < coords.length; i++) {
-            const A = coords[i - 1];
-            const B = coords[i];
-            const dx = A[0] - B[0];
-            const dy = A[1] - B[1];
-            cumDistArr[i] = cumDistArr[i - 1] + Math.sqrt(dx * dx + dy * dy);
-        }
+        for (let i = 1; i < coords.length; i++) { const A=coords[i-1]; const B=coords[i]; const dx=A[0]-B[0]; const dy=A[1]-B[1]; cumDistArr[i]=cumDistArr[i-1]+Math.sqrt(dx*dx+dy*dy); }
         const cumDist = new Float32Array(cumDistArr);
-        return { coords, stopIndices, stopTimesSec, segments, cumDist };
+        return { coords, stopIndices, originalStopTimesSec, adjustedStopTimesSec, originalSegments, cumDist };
     }, [coordinates, stopTimes, realtimeStopTimeUpdates]);
 
     const computePositionForSeconds = useCallback((secondsNow: number): LatLngTuple | null => {
-        // Accept fractional seconds for smoother interpolation
         const c = cache;
-        if (!c || !c.segments || c.segments.length === 0) {
-            if (c.coords && c.coords.length) return c.coords[0];
-            return null;
-        }
-        let seg: typeof c.segments[0] | null = null;
-        for (const s of c.segments) {
-            if (secondsNow >= s.startSec && secondsNow <= s.endSec) { seg = s; break; }
-        }
+        const segments = c.originalSegments; // utiliser segments basés sur horaires originaux pour mouvement continu
+        if (!c || !segments || segments.length === 0) { if (c.coords && c.coords.length) return c.coords[0]; return null; }
+        let seg: typeof segments[0] | null = null;
+        for (const s of segments) { if (secondsNow >= s.startSec && secondsNow <= s.endSec) { seg = s; break; } }
         if (!seg) {
-            const first = c.segments[0];
-            const last = c.segments[c.segments.length - 1];
+            const first = segments[0]; const last = segments[segments.length - 1];
             if (secondsNow < first.startSec) return c.coords[first.startIdx];
             if (secondsNow > last.endSec) return c.coords[last.endIdx];
-            let best = c.segments[0];
-            let bestDist = Math.abs(secondsNow - best.endSec);
-            for (const s of c.segments) {
-                const d = Math.min(Math.abs(secondsNow - s.startSec), Math.abs(secondsNow - s.endSec));
-                if (d < bestDist) { bestDist = d; best = s; }
-            }
-            return c.coords[best.endIdx];
+            // fallback: nearest segment based on time midpoint
+            let best = segments[0]; let bestScore = Infinity;
+            for (const s of segments) { const mid = (s.startSec + s.endSec)/2; const d = Math.abs(secondsNow - mid); if (d < bestScore) { bestScore = d; best = s; } }
+            seg = best;
         }
         const { startIdx, endIdx, startSec, endSec } = seg;
-        const frac = (secondsNow - startSec) / Math.max(1, (endSec - startSec));
+        const span = Math.max(1, endSec - startSec);
+        const frac = (secondsNow - startSec) / span;
         const cum = c.cumDist;
-        const segStartDist = cum[startIdx] ?? 0;
-        const segEndDist = cum[endIdx] ?? segStartDist + 1;
+        const segStartDist = cum[startIdx] ?? 0; const segEndDist = cum[endIdx] ?? segStartDist + 1;
         const targetDist = segStartDist + (segEndDist - segStartDist) * frac;
-        let i = startIdx;
-        while (i < endIdx && cum[i + 1] < targetDist) i++;
-        const d0 = cum[i];
-        const d1 = cum[i + 1] ?? d0 + 1;
-        const localFrac = (targetDist - d0) / Math.max(1e-6, (d1 - d0));
-        const a = c.coords[i];
-        const b = c.coords[i + 1] ?? a;
-        return [a[0] + (b[0] - a[0]) * localFrac, a[1] + (b[1] - a[1]) * localFrac];
+        let i = startIdx; while (i < endIdx && cum[i+1] < targetDist) i++;
+        const d0 = cum[i]; const d1 = cum[i+1] ?? d0 + 1; const localFrac = (targetDist - d0) / Math.max(1e-6, (d1 - d0));
+        const a = c.coords[i]; const b = c.coords[i+1] ?? a;
+        return [a[0] + (b[0]-a[0]) * localFrac, a[1] + (b[1]-a[1]) * localFrac];
     }, [cache]);
 
-    const firstNonNull = cache.stopTimesSec.find(t => t != null) ?? null;
-    const lastNonNull = [...cache.stopTimesSec].reverse().find(t => t != null) ?? null;
+    const firstNonNull = cache.originalStopTimesSec.find(t => t != null) ?? null;
+    const lastNonNull = [...cache.originalStopTimesSec].reverse().find(t => t != null) ?? null;
 
     const getEffectiveNowSec = useCallback((d: Date) => {
         // Integer seconds for active state checks
@@ -331,34 +295,108 @@ const Vehicle: React.FC<VehicleProps> = ({
     }, [realtimeStopTimeUpdates, getEffectiveNowSecHighRes]);
     const currentDelaySecs = computeCurrentDelaySecs();
 
-    // Fonction de scaling temporel pour adapter la vitesse au retard/avance
-    const computeScaledTime = useCallback((secondsNowFloat: number) => {
-        if (currentDelaySecs == null || firstNonNull == null || lastNonNull == null) return secondsNowFloat;
-        const totalDuration = lastNonNull - firstNonNull;
-        if (totalDuration <= 0) return secondsNowFloat;
-        let elapsed = secondsNowFloat - firstNonNull;
-        if (elapsed < 0) elapsed = 0; else if (elapsed > totalDuration) elapsed = totalDuration;
-        const denom = Math.max(30, totalDuration + currentDelaySecs); // garde positif
-        const factor = totalDuration / denom; // <1 ralentit (retard), >1 accélère (avance)
-        const scaledElapsed = elapsed * factor;
-        return firstNonNull + scaledElapsed;
-    }, [currentDelaySecs, firstNonNull, lastNonNull]);
+    // Adaptation anti-snap lors de mise à jour des stopTimeUpdates passés
+    const adaptationActiveRef = useRef(false);
+    const adaptationStartRef = useRef<number>(0);
+    const lastRtSignatureRef = useRef<string | null>(null);
+
+    // Détection de changement des mises à jour temps réel (signature)
+    useEffect(() => {
+        const sig = realtimeStopTimeUpdates ? JSON.stringify([...realtimeStopTimeUpdates].sort((a,b)=>a.stopSequence-b.stopSequence).map(u => ({
+            s: u.stopSequence,
+            aS: u.arrivalTimeSecs,
+            dS: u.departureTimeSecs,
+            aD: u.arrivalDelaySecs,
+            dD: u.departureDelaySecs
+        }))) : null;
+        if (sig !== lastRtSignatureRef.current) {
+            // Activation adaptation pour transition douce si changements sur des arrêts passés
+            adaptationActiveRef.current = true;
+            adaptationStartRef.current = performance.now();
+            lastRtSignatureRef.current = sig;
+        }
+    }, [realtimeStopTimeUpdates]);
+
+    // Helper pour approx distance cumulée d'une position affichée (projection simplifiée)
+    const approximateDistanceOnPath = useCallback((pos: LatLngTuple | null): number | null => {
+        const c = cache;
+        if (!pos || !c.coords.length) return null;
+        const coords = c.coords;
+        const cum = c.cumDist;
+        let bestI = 0; let bestD2 = Infinity;
+        for (let i = 0; i < coords.length; i++) {
+            const dx = coords[i][0] - pos[0];
+            const dy = coords[i][1] - pos[1];
+            const d2 = dx*dx + dy*dy;
+            if (d2 < bestD2) { bestD2 = d2; bestI = i; }
+        }
+        return cum[bestI] ?? 0;
+    }, [cache]);
+
+    const positionAtDistance = useCallback((distTarget: number): LatLngTuple | null => {
+        const c = cache;
+        if (!c.coords.length) return null;
+        const cum = c.cumDist;
+        if (distTarget <= cum[0]) return c.coords[0];
+        const lastIdx = c.coords.length - 1;
+        if (distTarget >= cum[lastIdx]) return c.coords[lastIdx];
+        let i = 0;
+        while (i < lastIdx && cum[i+1] < distTarget) i++;
+        const d0 = cum[i];
+        const d1 = cum[i+1];
+        const f = (distTarget - d0) / Math.max(1e-9, (d1 - d0));
+        const a = c.coords[i];
+        const b = c.coords[i+1];
+        return [a[0] + (b[0]-a[0])*f, a[1] + (b[1]-a[1])*f];
+    }, [cache]);
 
     useEffect(() => {
         // Register global animation callback instead of per-component RAF loop
         const update = () => {
             const now = new Date();
             const secondsNowFloat = getEffectiveNowSecHighRes(now);
-            const interpTime = computeScaledTime(secondsNowFloat);
-            const target = computePositionForSeconds(interpTime);
-            if (!target) return;
+            let interpSeconds = secondsNowFloat;
+            if (currentDelaySecs != null) interpSeconds = secondsNowFloat - currentDelaySecs;
+            if (firstNonNull != null && lastNonNull != null && lastNonNull > firstNonNull) {
+                // Clamp pour éviter freeze en cas de retard extrême
+                if (interpSeconds < firstNonNull) interpSeconds = firstNonNull;
+                else if (interpSeconds > lastNonNull) interpSeconds = lastNonNull;
+            }
+            const rawTarget = computePositionForSeconds(interpSeconds);
+            if (!rawTarget) return;
+            let target = rawTarget;
+
+            // Adaptation anti-snap: si mise à jour récente et déplacement brutal arrière ou avant
+            if (adaptationActiveRef.current) {
+                const elapsed = performance.now() - adaptationStartRef.current;
+                const currentPos = displayedPosRef.current;
+                const currentDist = approximateDistanceOnPath(currentPos);
+                const targetDist = approximateDistanceOnPath(rawTarget);
+                if (currentPos && currentDist != null && targetDist != null) {
+                    const distDelta = targetDist - currentDist;
+                    const maxBackward = - (cache.cumDist[cache.cumDist.length-1] * 0.02);
+                    const maxForward = (cache.cumDist[cache.cumDist.length-1] * 0.04);
+                    let clampedDelta = distDelta;
+                    if (distDelta < maxBackward) clampedDelta = maxBackward;
+                    if (distDelta > maxForward) clampedDelta = maxForward;
+                    const adjustedDist = currentDist + clampedDelta;
+                    target = positionAtDistance(adjustedDist) || rawTarget;
+                }
+                const spatialD2 = currentPos ? ((currentPos[0]-rawTarget[0])**2 + (currentPos[1]-rawTarget[1])**2) : 0;
+                if (elapsed > 5000 || spatialD2 < 1e-12) {
+                    adaptationActiveRef.current = false;
+                }
+            }
+
             const current = displayedPosRef.current;
             if (!current) {
                 displayedPosRef.current = target;
                 if (markerRef.current) markerRef.current.setLatLng(target); else setPosition(target);
                 return;
             }
-            const smoothing = 0.18;
+            // Smoothing dynamique (plus doux si adaptation active)
+            const smoothingBase = 0.18;
+            const smoothing = adaptationActiveRef.current ? smoothingBase * 0.35 : smoothingBase;
             const newLat = current[0] + (target[0] - current[0]) * smoothing;
             const newLon = current[1] + (target[1] - current[1]) * smoothing;
             const newPos: LatLngTuple = [newLat, newLon];
@@ -368,7 +406,7 @@ const Vehicle: React.FC<VehicleProps> = ({
         animationSubscribers.add(update);
         startGlobalAnimation();
         return () => { animationSubscribers.delete(update); };
-    }, [computePositionForSeconds, getEffectiveNowSecHighRes, computeScaledTime]);
+    }, [computePositionForSeconds, getEffectiveNowSecHighRes, approximateDistanceOnPath, positionAtDistance, cache, currentDelaySecs, firstNonNull, lastNonNull]);
 
     const computeFontSize = (text: string, diameter: number) => {
         const maxFont = diameter / 2;
@@ -434,31 +472,73 @@ const Vehicle: React.FC<VehicleProps> = ({
         return Math.min(1, Math.max(0, (now - firstNonNull) / span));
     }, [firstNonNull, lastNonNull, getEffectiveNowSecHighRes]);
 
+    // Progression "réelle" basée sur les horaires ajustés (retards) pour comparer avec la progression théorique
+    const realProgressPct = useMemo(() => {
+        const adjusted = cache.adjustedStopTimesSec;
+        if (!adjusted || !adjusted.length) return tripProgressPct;
+        const firstAdj = adjusted.find(t => t != null) ?? null;
+        const lastAdj = [...adjusted].reverse().find(t => t != null) ?? null;
+        if (firstAdj == null || lastAdj == null || lastAdj <= firstAdj) return tripProgressPct;
+        const now = getEffectiveNowSecHighRes(new Date());
+        return Math.min(1, Math.max(0, (now - firstAdj) / (lastAdj - firstAdj)));
+    }, [cache.adjustedStopTimesSec, getEffectiveNowSecHighRes, tripProgressPct]);
+
     // Libellé détaillé pour le survol (version moderne, sobre)
     const hoverTooltipHtml = useMemo(() => {
         const baseFont = 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial';
-
+        const nowSecFloat = getEffectiveNowSecHighRes(new Date());
+        // Détermination arrêt précédent / suivant sur base ajustée (plus pertinent en retard)
+        const timesForPrevNext = cache.adjustedStopTimesSec;
+        let prevIdx: number | null = null;
+        let nextIdx: number | null = null;
+        for (let i = 0; i < timesForPrevNext.length; i++) {
+            const t = timesForPrevNext[i];
+            if (t != null && t <= nowSecFloat) prevIdx = i;
+            if (t != null && t > nowSecFloat) { nextIdx = i; break; }
+        }
+        const rtDelayMap = new Map<number, number>();
+        (realtimeStopTimeUpdates || []).forEach(u => {
+            const d = u.departureDelaySecs ?? u.arrivalDelaySecs;
+            if (d != null) rtDelayMap.set(u.stopSequence, d);
+        });
+        const formatSecsHHMM = (sec: number | null) => {
+            if (sec == null) return '--:--';
+            const m = Math.floor((sec / 60) % 60);
+            const h = Math.floor(sec / 3600);
+            const pad = (n: number) => String(n).padStart(2,'0');
+            return `${pad(h)}:${pad(m)}`;
+        };
+        const stopInfoBlock = (idx: number | null, label: string) => {
+            if (idx == null || !stopTimes[idx]) {
+                return `<div class='flex flex-col gap-0.5'><div class='text-[11px] text-gray-400'>${label}</div><div class='text-xs text-gray-300 italic'>N/A</div></div>`;
+            }
+            const st = stopTimes[idx];
+            const seq = st.stop_sequence ?? idx;
+            const delay = rtDelayMap.get(seq) ?? null;
+            const timeSec = timesForPrevNext[idx];
+            const delayBadge = delay != null ? `<span class='ml-1 px-1.5 py-0.5 rounded bg-gray-800/80 text-white text-[10px] font-medium'>${delay>0?'+':'-'}${Math.abs(delay)>=60?Math.round(Math.abs(delay)/60)+'m':Math.abs(delay)+'s'}</span>` : '';
+            return `<div class='flex flex-col gap-0.5'>
+                <div class='text-[11px] text-gray-400'>${label}</div>
+                <div class='text-xs font-medium text-gray-700 truncate'>${st.stop_id || 'Stop'}</div>
+                <div class='flex items-center text-[11px] text-gray-500'>${formatSecsHHMM(timeSec)}${delayBadge}</div>
+            </div>`;
+        };
         // Helpers
         const formatBadge = (d: number | null) => {
             if (d == null) return '';
             return `${d > 0 ? '+' : '-'}${Math.abs(d) >= 60 ? Math.round(Math.abs(d) / 60) + 'm' : Math.abs(d) + 's'}`;
         };
 
-        // Small neutral svg (clock) — kept minimal to avoid "emoji" look
-        const clockSvg = (color: string) => `
-            <svg width="16" height="16" viewBox="0 0 24 24">
-                <circle cx="12" cy="12" r="10" stroke="${color}" stroke-width="1.5" fill="none" />
-                <path d="M12 7.5v4l2 1" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>`;
-
         if (currentDelaySecs == null) {
             const accent = '#667C4A';
+            const progressPlanned = (tripProgressPct||0)*100;
+            const progressReal = (realProgressPct||0)*100;
             return `
-                <div class="bg-white/95 backdrop-blur-sm border border-gray-200 shadow-sm rounded-xl p-3 w-[260px] text-sm" style="font-family: ${baseFont};">
+                <div class="bg-white/95 backdrop-blur-sm border border-gray-200 shadow-sm rounded-xl p-3 w-[300px] text-sm" style="font-family: ${baseFont};">
                     <div class="flex items-center gap-3">
                         <div class="flex-none">
                             <div class="w-10 h-10 rounded-md grid place-items-center" style="background: ${accent}22;">
-                                ${clockSvg(accent)}
+                                <svg width="16" height="16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="${accent}" stroke-width="1.5" fill="none" /><path d="M12 7.5v4l2 1" stroke="${accent}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
                             </div>
                         </div>
                         <div class="flex-1 min-w-0">
@@ -467,12 +547,13 @@ const Vehicle: React.FC<VehicleProps> = ({
                                 <div class="text-xs text-gray-400">On time</div>
                             </div>
                             <div class="mt-2">
-                                <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                    <div class="h-full rounded-full" style="width: 6%; background: ${accent}; transition: width .6s ease;"></div>
-                                </div>
-                                <div class="mt-1 text-xs text-gray-400">Progress · 6%</div>
+                                ${dualProgressBars(accent, accent, progressPlanned, progressReal)}
                             </div>
                         </div>
+                    </div>
+                    <div class='mt-3 grid grid-cols-2 gap-3'>
+                        ${stopInfoBlock(prevIdx, 'Previous')}
+                        ${stopInfoBlock(nextIdx, 'Next')}
                     </div>
                 </div>
             `;
@@ -490,21 +571,18 @@ const Vehicle: React.FC<VehicleProps> = ({
                 if (abs >= 300) return { main: '#ef4444', soft: '#fee2e2' };
                 return { main: '#f97316', soft: '#fff7ed' };
             }
-            // early / ahead
             if (abs >= 600) return { main: '#1e3a8a', soft: '#eef2ff' };
             return { main: '#2563eb', soft: '#eef2ff' };
         })();
-
-        const iconBg = palette.soft;
-        const iconColor = palette.main;
-        const progress = Math.min(100, Math.max(4, (tripProgressPct || 0) * 100)).toFixed(0);
-
+        const iconBg = palette.soft; // iconColor retiré car non utilisé
+        const progressPlanned = (tripProgressPct||0)*100;
+        const progressReal = (realProgressPct||0)*100;
         return `
-            <div class="bg-white/95 backdrop-blur-sm border border-gray-200 shadow-sm rounded-xl p-3 w-[260px] text-sm" style="font-family: ${baseFont};">
+            <div class="bg-white/95 backdrop-blur-sm border border-gray-200 shadow-sm rounded-xl p-3 w-[300px] text-sm" style="font-family: ${baseFont};">
                 <div class="flex items-start gap-3">
                     <div class="flex-none">
                         <div class="w-10 h-10 rounded-md grid place-items-center" style="background: ${iconBg};">
-                            ${clockSvg(iconColor)}
+                            <svg width="16" height="16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="${palette.main}" stroke-width="1.5" fill="none" /><path d="M12 7.5v4l2 1" stroke="${palette.main}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
                         </div>
                     </div>
                     <div class="flex-1 min-w-0">
@@ -515,18 +593,16 @@ const Vehicle: React.FC<VehicleProps> = ({
                                 <div class="px-2 py-0.5 rounded-md text-xs font-semibold" style="background:${palette.main}; color: #fff; min-width:44px; text-align:center;">${badgeText}</div>
                             </div>
                         </div>
-
-                        <div class="mt-3">
-                            <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                <div class="h-full rounded-full" style="width: ${progress}%; background: ${palette.main}; transition: width .6s ease;"></div>
-                            </div>
-                            <div class="mt-1 text-xs text-gray-400">Progress · ${progress}%</div>
-                        </div>
+                        ${dualProgressBars(palette.soft, palette.main, progressPlanned, progressReal)}
                     </div>
+                </div>
+                <div class='mt-3 grid grid-cols-2 gap-3'>
+                    ${stopInfoBlock(prevIdx, 'Previous')}
+                    ${stopInfoBlock(nextIdx, 'Next')}
                 </div>
             </div>
         `;
-    }, [currentDelaySecs, routeShortName, tripProgressPct]);
+    }, [currentDelaySecs, routeShortName, tripProgressPct, realProgressPct, cache.adjustedStopTimesSec, stopTimes, realtimeStopTimeUpdates, getEffectiveNowSecHighRes]);
 
     // Native tooltip on hover (HTML)
     useEffect(() => {
@@ -571,6 +647,27 @@ const Vehicle: React.FC<VehicleProps> = ({
             {/* Tooltip handle natively via bindTooltip/unbindTooltip */}
         </Marker>
     );
+};
+
+// Générateur HTML pour double barre de progression (planned vs realtime)
+const dualProgressBars = (plannedColor: string, realColor: string, plannedPct: number, realPct: number) => {
+    const p = Math.max(0, Math.min(100, plannedPct));
+    const r = Math.max(0, Math.min(100, realPct));
+    return `
+        <div class='flex flex-col gap-1'>
+            <div class='flex items-center justify-between text-[11px] text-gray-500'>
+                <span>Planned</span><span>${Math.round(p)}%</span>
+            </div>
+            <div class='h-1.5 bg-gray-100 rounded-full overflow-hidden'>
+                <div class='h-full rounded-full' style='width:${p}%;background:${plannedColor};opacity:.85;transition:width .6s ease;'></div>
+            </div>
+            <div class='flex items-center justify-between text-[11px] text-gray-500 mt-1'>
+                <span>Realtime</span><span>${Math.round(r)}%</span>
+            </div>
+            <div class='h-1.5 bg-gray-100 rounded-full overflow-hidden'>
+                <div class='h-full rounded-full' style='width:${r}%;background:${realColor};transition:width .6s ease;'></div>
+            </div>
+        </div>`;
 };
 
 export default Vehicle;
