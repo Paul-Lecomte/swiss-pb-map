@@ -14,8 +14,8 @@ export default function Option({ onClose, prefs, setPrefs }: Props) {
     return (
         <Paper elevation={6} sx={{ width: 280, borderRadius: 3, p: 2 }}>
             <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
-                <Typography variant="subtitle1" fontWeight={700}>Options d'affichage</Typography>
-                <IconButton onClick={onClose} size="small" aria-label="Fermer">
+                <Typography variant="subtitle1" fontWeight={700}>Options</Typography>
+                <IconButton onClick={onClose} size="small" aria-label="Close">
                     <CloseIcon fontSize="small" />
                 </IconButton>
             </Box>
@@ -23,11 +23,11 @@ export default function Option({ onClose, prefs, setPrefs }: Props) {
             <Box display="flex" flexDirection="column" gap={1}>
                 <FormControlLabel
                     control={<Switch checked={!!prefs?.showRealtimeOverlay} onChange={toggle('showRealtimeOverlay')} color="primary" />}
-                    label="Overlay temps réel"
+                    label="Realtime overlay"
                 />
                 <FormControlLabel
                     control={<Switch checked={!!prefs?.showRouteProgress} onChange={toggle('showRouteProgress')} color="primary" />}
-                    label="Progression chargement des routes"
+                    label="Routes load progress"
                 />
             </Box>
         </Paper>
