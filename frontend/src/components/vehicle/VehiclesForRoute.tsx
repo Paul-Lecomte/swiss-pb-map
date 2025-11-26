@@ -1,5 +1,5 @@
 "use client";
-import React, { useMemo } from "react";
+import React, { useMemo, useEffect, useState } from "react";
 import Vehicle from "./Vehicle";
 
 type LatLngTuple = [number, number];
@@ -26,7 +26,7 @@ interface VehiclesForRouteProps {
     color?: string;
 }
 
-// Parse HH:MM:SS possibly >24 into seconds since midnight (can exceed 86400)
+// Parse HH:MM:SS (can be >24:00) into seconds since midnight
 const parseGtfsTime = (s?: string): number | null => {
     if (!s) return null;
     const parts = s.split(":").map(p => parseInt(p, 10));
@@ -37,7 +37,7 @@ const parseGtfsTime = (s?: string): number | null => {
     return hours * 3600 + mins * 60 + secs;
 };
 
-// Decide if a trip is currently running by comparing now (with day shifts) against trip start/end seconds
+// Determine if a trip is currently running by comparing now (with day shifts) against trip start/end seconds
 const isTripRunningNow = (stopTimes: StopTime[]): boolean => {
     const times: number[] = [];
     for (const st of stopTimes) {
@@ -62,6 +62,23 @@ const isTripRunningNow = (stopTimes: StopTime[]): boolean => {
 };
 
 const VehiclesForRoute: React.FC<VehiclesForRouteProps> = ({ routeId, coordinates, trips, runningTripId, color }) => {
+    const [stopsLookup, setStopsLookup] = useState<Record<string,string> | null>(null);
+    useEffect(() => {
+        // Try to fetch a prebuilt stops mapping from public/stops.json (optional)
+        let mounted = true;
+        fetch('/stops.json').then(r => {
+            if (!r.ok) throw new Error('no stops.json');
+            return r.json();
+        }).then((json) => {
+            if (!mounted) return;
+            // expected shape: { [stop_id]: stop_name }
+            if (json && typeof json === 'object') setStopsLookup(json as Record<string,string>);
+        }).catch(() => {
+            // ignore — we'll fallback to stop_time provided names or ids
+        });
+        return () => { mounted = false; };
+    }, []);
+
     const runningTrips = useMemo(() => {
         if (!Array.isArray(trips) || trips.length === 0) return [];
         // filter trips that appear to be running now
@@ -80,6 +97,7 @@ const VehiclesForRoute: React.FC<VehiclesForRouteProps> = ({ routeId, coordinate
                     stopTimes={trip.stopTimes}
                     color={color}
                     isRunning={runningTripId === trip.trip_id}
+                    stopsLookup={stopsLookup}
                 />
             ))}
         </>
