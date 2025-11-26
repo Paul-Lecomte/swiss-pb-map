@@ -1,5 +1,5 @@
 // TODO: use the percentage of trip completed to be realtime accurate
-"use client";
+ "use client";
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { Marker } from "react-leaflet";
 import L, { Marker as LeafletMarker } from "leaflet";
@@ -7,11 +7,23 @@ import { useMap } from "react-leaflet";
 
 type LatLngTuple = [number, number];
 
+// small helpers (restored)
+const parseGtfsTime = (s?: unknown): number | null => {
+    if (typeof s !== 'string') return null;
+    const parts = s.split(':').map(p => parseInt(p, 10));
+    if (parts.length < 2 || parts.some(isNaN)) return null;
+    const [hours = 0, mins = 0, secs = 0] = parts;
+    return hours * 3600 + mins * 60 + secs;
+};
+const sq = (v: number) => v * v;
+const dist2 = (a: LatLngTuple, b: LatLngTuple) => sq(a[0] - b[0]) + sq(a[1] - b[1]);
+
 interface StopTime {
     arrival_time?: string;
     departure_time?: string;
     stop_sequence?: number;
     stop_id?: string;
+    stop_name?: string;
     stop_lat?: number;
     stop_lon?: number;
 }
@@ -35,28 +47,8 @@ interface VehicleProps {
     onClick?: () => void;
     zoomLevel?: number;
     realtimeStopTimeUpdates?: RealtimeStopTimeUpdate[] | null; // ajout temps réel spécifique à ce trip
+    stopsLookup?: Record<string,string> | null;
 }
-
-// Interface locale pour les options de tooltip
-interface LeafletTooltipOptions {
-    direction?: string;
-    offset?: [number, number];
-    permanent?: boolean;
-    sticky?: boolean;
-    opacity?: number;
-    className?: string;
-}
-
-const parseGtfsTime = (s?: unknown): number | null => {
-    if (typeof s !== "string") return null;
-    const parts = s.split(":").map(p => parseInt(p, 10));
-    if (parts.length < 2 || parts.some(isNaN)) return null;
-    const [hours = 0, mins = 0, secs = 0] = parts;
-    return hours * 3600 + mins * 60 + secs;
-};
-
-const sq = (v: number) => v * v;
-const dist2 = (a: LatLngTuple, b: LatLngTuple) => sq(a[0] - b[0]) + sq(a[1] - b[1]);
 
 // Global animation registry to avoid one RAF per vehicle
 const animationSubscribers = new Set<() => void>();
@@ -135,9 +127,10 @@ const Vehicle: React.FC<VehicleProps> = ({
                                              onClick,
                                              zoomLevel: zoomFromProps,
                                              realtimeStopTimeUpdates,
+                                             stopsLookup,
                                          }) => {
     const markerRef = useRef<LeafletMarker | null>(null);
-    // High-res displayed position smoothing ref (does NOT store history)
+    // High-resolution displayed position smoothing ref (does NOT store history)
     const displayedPosRef = useRef<LatLngTuple | null>(null);
     const map = useMap();
     const [zoomLevelState, setZoomLevelState] = useState<number>(() => {
@@ -271,12 +264,16 @@ const Vehicle: React.FC<VehicleProps> = ({
         return computePositionForSeconds(secondsNow);
     });
 
-    // État hover remis ici avant utilisation plus bas
+    // Hover state used below
     const [hovered, setHovered] = useState(false);
     const handleMouseOver = useCallback(() => setHovered(true), []);
     const handleMouseOut = useCallback(() => setHovered(false), []);
 
-    // Calcul du retard/avance courant déplacé avant l’effet d’animation
+    // hoveredRef for fast read access inside the animation loop (avoids stale closures)
+    const hoveredRef = useRef<boolean>(hovered);
+    useEffect(() => { hoveredRef.current = hovered; }, [hovered]);
+
+    // Compute current delay/early seconds (used by animation/update logic)
     const computeCurrentDelaySecs = useCallback((): number | null => {
         if (!realtimeStopTimeUpdates || realtimeStopTimeUpdates.length === 0) return null;
         const now = new Date();
@@ -295,12 +292,12 @@ const Vehicle: React.FC<VehicleProps> = ({
     }, [realtimeStopTimeUpdates, getEffectiveNowSecHighRes]);
     const currentDelaySecs = computeCurrentDelaySecs();
 
-    // Adaptation anti-snap lors de mise à jour des stopTimeUpdates passés
+    // Anti-snap adaptation when past stop-time updates change (smooth transition)
     const adaptationActiveRef = useRef(false);
     const adaptationStartRef = useRef<number>(0);
     const lastRtSignatureRef = useRef<string | null>(null);
 
-    // Détection de changement des mises à jour temps réel (signature)
+    // Detect changes in realtime stop-time updates (signature) to trigger adaptation
     useEffect(() => {
         const sig = realtimeStopTimeUpdates ? JSON.stringify([...realtimeStopTimeUpdates].sort((a,b)=>a.stopSequence-b.stopSequence).map(u => ({
             s: u.stopSequence,
@@ -317,7 +314,7 @@ const Vehicle: React.FC<VehicleProps> = ({
         }
     }, [realtimeStopTimeUpdates]);
 
-    // Helper pour approx distance cumulée d'une position affichée (projection simplifiée)
+    // Helper: approximate cumulative distance along path for a given displayed position
     const approximateDistanceOnPath = useCallback((pos: LatLngTuple | null): number | null => {
         const c = cache;
         if (!pos || !c.coords.length) return null;
@@ -362,11 +359,28 @@ const Vehicle: React.FC<VehicleProps> = ({
                 if (interpSeconds < firstNonNull) interpSeconds = firstNonNull;
                 else if (interpSeconds > lastNonNull) interpSeconds = lastNonNull;
             }
+            // --- Mise à jour dynamique des progressions Planned vs Realtime ---
+            try {
+                const planned = computePlannedProgress(secondsNowFloat);
+                const real = computeRealProgress(secondsNowFloat);
+                // Ne mettre à jour le state que si on est en hover (pour limiter re-renders),
+                // ou si la différence est significative (>0.5%) pour rester réactif.
+                const diffPlanned = Math.abs(dynamicProgress.planned - planned);
+                const diffReal = Math.abs(dynamicProgress.real - real);
+                if (hoveredRef.current || diffPlanned > 0.005 || diffReal > 0.005) {
+                    setDynamicProgress(prev => {
+                        // évite nouvelle assignation si pas de changement notable
+                        if (Math.abs(prev.planned - planned) < 1e-6 && Math.abs(prev.real - real) < 1e-6) return prev;
+                        return { planned, real };
+                    });
+                }
+            } catch { /* safe guard */ }
+            // --- fin mise à jour dynamique ---
             const rawTarget = computePositionForSeconds(interpSeconds);
             if (!rawTarget) return;
             let target = rawTarget;
 
-            // Adaptation anti-snap: si mise à jour récente et déplacement brutal arrière ou avant
+            // Anti-snap adaptation: if an update happened recently and there's a large jump
             if (adaptationActiveRef.current) {
                 const elapsed = performance.now() - adaptationStartRef.current;
                 const currentPos = displayedPosRef.current;
@@ -463,170 +477,104 @@ const Vehicle: React.FC<VehicleProps> = ({
         iconAnchor: [diameter / 2, diameter / 2],
     }), [styleStr, diameter, routeShortName, sideDelayLabelHtml, needsPulse]);
 
-    // Progression du trajet (ratio 0-1)
-    const tripProgressPct = useMemo(() => {
+    // --- Dynamic progress values (planned vs realtime) ---
+    const [dynamicProgress, setDynamicProgress] = useState<{ planned: number; real: number }>({ planned: 0, real: 0 });
+    const dynamicProgressRef = useRef(dynamicProgress);
+    useEffect(() => { dynamicProgressRef.current = dynamicProgress; }, [dynamicProgress]);
+
+    const computePlannedProgress = useCallback((nowSecFloat: number) => {
         if (firstNonNull == null || lastNonNull == null) return 0;
-        const now = getEffectiveNowSecHighRes(new Date());
         const span = lastNonNull - firstNonNull;
         if (span <= 0) return 0;
-        return Math.min(1, Math.max(0, (now - firstNonNull) / span));
-    }, [firstNonNull, lastNonNull, getEffectiveNowSecHighRes]);
+        return Math.min(1, Math.max(0, (nowSecFloat - firstNonNull) / span));
+    }, [firstNonNull, lastNonNull]);
 
-    // Progression "réelle" basée sur les horaires ajustés (retards) pour comparer avec la progression théorique
-    const realProgressPct = useMemo(() => {
+    const computeRealProgress = useCallback((nowSecFloat: number) => {
         const adjusted = cache.adjustedStopTimesSec;
-        if (!adjusted || !adjusted.length) return tripProgressPct;
+        if (!adjusted || !adjusted.length) return computePlannedProgress(nowSecFloat);
         const firstAdj = adjusted.find(t => t != null) ?? null;
         const lastAdj = [...adjusted].reverse().find(t => t != null) ?? null;
-        if (firstAdj == null || lastAdj == null || lastAdj <= firstAdj) return tripProgressPct;
-        const now = getEffectiveNowSecHighRes(new Date());
-        return Math.min(1, Math.max(0, (now - firstAdj) / (lastAdj - firstAdj)));
-    }, [cache.adjustedStopTimesSec, getEffectiveNowSecHighRes, tripProgressPct]);
+        if (firstAdj == null || lastAdj == null || lastAdj <= firstAdj) return computePlannedProgress(nowSecFloat);
+        return Math.min(1, Math.max(0, (nowSecFloat - firstAdj) / (lastAdj - firstAdj)));
+    }, [cache.adjustedStopTimesSec, computePlannedProgress]);
 
-    // Libellé détaillé pour le survol (version moderne, sobre)
-    const hoverTooltipHtml = useMemo(() => {
-        const baseFont = 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial';
-        const nowSecFloat = getEffectiveNowSecHighRes(new Date());
-        // Détermination arrêt précédent / suivant sur base ajustée (plus pertinent en retard)
-        const timesForPrevNext = cache.adjustedStopTimesSec;
-        let prevIdx: number | null = null;
-        let nextIdx: number | null = null;
-        for (let i = 0; i < timesForPrevNext.length; i++) {
-            const t = timesForPrevNext[i];
-            if (t != null && t <= nowSecFloat) prevIdx = i;
-            if (t != null && t > nowSecFloat) { nextIdx = i; break; }
-        }
-        const rtDelayMap = new Map<number, number>();
-        (realtimeStopTimeUpdates || []).forEach(u => {
-            const d = u.departureDelaySecs ?? u.arrivalDelaySecs;
-            if (d != null) rtDelayMap.set(u.stopSequence, d);
-        });
-        const formatSecsHHMM = (sec: number | null) => {
-            if (sec == null) return '--:--';
-            const m = Math.floor((sec / 60) % 60);
-            const h = Math.floor(sec / 3600);
-            const pad = (n: number) => String(n).padStart(2,'0');
-            return `${pad(h)}:${pad(m)}`;
-        };
-        const stopInfoBlock = (idx: number | null, label: string) => {
-            if (idx == null || !stopTimes[idx]) {
-                return `<div class='flex flex-col gap-0.5'><div class='text-[11px] text-gray-400'>${label}</div><div class='text-xs text-gray-300 italic'>N/A</div></div>`;
-            }
-            const st = stopTimes[idx];
-            const seq = st.stop_sequence ?? idx;
-            const delay = rtDelayMap.get(seq) ?? null;
-            const timeSec = timesForPrevNext[idx];
-            const delayBadge = delay != null ? `<span class='ml-1 px-1.5 py-0.5 rounded bg-gray-800/80 text-white text-[10px] font-medium'>${delay>0?'+':'-'}${Math.abs(delay)>=60?Math.round(Math.abs(delay)/60)+'m':Math.abs(delay)+'s'}</span>` : '';
-            return `<div class='flex flex-col gap-0.5'>
-                <div class='text-[11px] text-gray-400'>${label}</div>
-                <div class='text-xs font-medium text-gray-700 truncate'>${st.stop_id || 'Stop'}</div>
-                <div class='flex items-center text-[11px] text-gray-500'>${formatSecsHHMM(timeSec)}${delayBadge}</div>
-            </div>`;
-        };
-        // Helpers
-        const formatBadge = (d: number | null) => {
-            if (d == null) return '';
-            return `${d > 0 ? '+' : '-'}${Math.abs(d) >= 60 ? Math.round(Math.abs(d) / 60) + 'm' : Math.abs(d) + 's'}`;
-        };
-
-        if (currentDelaySecs == null) {
-            const accent = '#667C4A';
-            const progressPlanned = (tripProgressPct||0)*100;
-            const progressReal = (realProgressPct||0)*100;
-            return `
-                <div class="bg-white/95 backdrop-blur-sm border border-gray-200 shadow-sm rounded-xl p-3 w-[300px] text-sm" style="font-family: ${baseFont};">
-                    <div class="flex items-center gap-3">
-                        <div class="flex-none">
-                            <div class="w-10 h-10 rounded-md grid place-items-center" style="background: ${accent}22;">
-                                <svg width="16" height="16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="${accent}" stroke-width="1.5" fill="none" /><path d="M12 7.5v4l2 1" stroke="${accent}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-                            </div>
-                        </div>
-                        <div class="flex-1 min-w-0">
-                            <div class="flex items-center justify-between gap-2">
-                                <div class="truncate font-medium text-gray-800 text-sm">${routeShortName || 'Trip'}</div>
-                                <div class="text-xs text-gray-400">On time</div>
-                            </div>
-                            <div class="mt-2">
-                                ${dualProgressBars(accent, accent, progressPlanned, progressReal)}
-                            </div>
-                        </div>
-                    </div>
-                    <div class='mt-3 grid grid-cols-2 gap-3'>
-                        ${stopInfoBlock(prevIdx, 'Previous')}
-                        ${stopInfoBlock(nextIdx, 'Next')}
-                    </div>
-                </div>
-            `;
-        }
-
-        const delay = currentDelaySecs;
-        const abs = Math.abs(delay);
-        const isLate = delay > 0;
-        const badgeText = formatBadge(delay);
-        const label = isLate ? `Delay ${badgeText}` : `Early ${badgeText}`;
-
-        const palette = (() => {
-            if (isLate) {
-                if (abs >= 600) return { main: '#b91c1c', soft: '#fee2e2' };
-                if (abs >= 300) return { main: '#ef4444', soft: '#fee2e2' };
-                return { main: '#f97316', soft: '#fff7ed' };
-            }
-            if (abs >= 600) return { main: '#1e3a8a', soft: '#eef2ff' };
-            return { main: '#2563eb', soft: '#eef2ff' };
-        })();
-        const iconBg = palette.soft; // iconColor retiré car non utilisé
-        const progressPlanned = (tripProgressPct||0)*100;
-        const progressReal = (realProgressPct||0)*100;
+    // Tooltip HTML builder (uses stopsLookup if provided). We render HTML and bind it to Leaflet tooltip on hover.
+    const dualProgressBarsHtml = (plannedColor: string, realColor: string, plannedPct: number, realPct: number) => {
+        const p = Math.max(0, Math.min(100, plannedPct));
+        const r = Math.max(0, Math.min(100, realPct));
         return `
-            <div class="bg-white/95 backdrop-blur-sm border border-gray-200 shadow-sm rounded-xl p-3 w-[300px] text-sm" style="font-family: ${baseFont};">
-                <div class="flex items-start gap-3">
-                    <div class="flex-none">
-                        <div class="w-10 h-10 rounded-md grid place-items-center" style="background: ${iconBg};">
-                            <svg width="16" height="16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="${palette.main}" stroke-width="1.5" fill="none" /><path d="M12 7.5v4l2 1" stroke="${palette.main}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-                        </div>
-                    </div>
-                    <div class="flex-1 min-w-0">
-                        <div class="flex items-center justify-between gap-2">
-                            <div class="truncate font-medium text-gray-800 text-sm">${routeShortName || 'Trip'}</div>
-                            <div class="flex items-center gap-2">
-                                <div class="text-xs text-gray-400">${label}</div>
-                                <div class="px-2 py-0.5 rounded-md text-xs font-semibold" style="background:${palette.main}; color: #fff; min-width:44px; text-align:center;">${badgeText}</div>
-                            </div>
-                        </div>
-                        ${dualProgressBars(palette.soft, palette.main, progressPlanned, progressReal)}
-                    </div>
+            <div class='flex flex-col gap-1'>
+                <div class='flex items-center justify-between text-[11px] text-gray-500'>
+                    <span>Planned</span><span>${Math.round(p)}%</span>
                 </div>
-                <div class='mt-3 grid grid-cols-2 gap-3'>
-                    ${stopInfoBlock(prevIdx, 'Previous')}
-                    ${stopInfoBlock(nextIdx, 'Next')}
+                <div class='h-1.5 bg-gray-100 rounded-full overflow-hidden'>
+                    <div class='h-full rounded-full' style='width:${p}%;background:${plannedColor};opacity:.85;transition:width .6s ease;'></div>
                 </div>
-            </div>
-        `;
-    }, [currentDelaySecs, routeShortName, tripProgressPct, realProgressPct, cache.adjustedStopTimesSec, stopTimes, realtimeStopTimeUpdates, getEffectiveNowSecHighRes]);
+                <div class='flex items-center justify-between text-[11px] text-gray-500 mt-1'>
+                    <span>Realtime</span><span>${Math.round(r)}%</span>
+                </div>
+                <div class='h-1.5 bg-gray-100 rounded-full overflow-hidden'>
+                    <div class='h-full rounded-full' style='width:${r}%;background:${realColor};transition:width .6s ease;'></div>
+                </div>
+            </div>`;
+    };
 
-    // Native tooltip on hover (HTML)
+    const buildTooltipHtml = useCallback(() => {
+         const progressPlanned = Math.round((dynamicProgress.planned || 0) * 100);
+         const progressReal = Math.round((dynamicProgress.real || 0) * 100);
+         const now = getEffectiveNowSecHighRes(new Date());
+         const timesForPrevNext = cache.adjustedStopTimesSec;
+         let prev: number | null = null; let next: number | null = null;
+         for (let i = 0; i < timesForPrevNext.length; i++) {
+             const t = timesForPrevNext[i];
+             if (t != null && t <= now) prev = i;
+             if (t != null && t > now) { next = i; break; }
+         }
+         const stopLabelAt = (idx: number | null) => {
+             if (idx == null || !stopTimes[idx]) return 'N/A';
+             const st = stopTimes[idx];
+             return (stopsLookup && st.stop_id ? stopsLookup[st.stop_id] : null) || st.stop_name || st.stop_id || 'Stop';
+         };
+         const delayLabel = currentDelaySecs == null ? 'On time' : (currentDelaySecs > 0 ? `Delay ${formatDelayLabel(currentDelaySecs)}` : `Early ${formatDelayLabel(currentDelaySecs)}`);
+         return `
+             <div style="font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; width:300px;">
+                 <div style="display:flex;gap:12px;align-items:flex-start;">
+                     <div style="width:40px;height:40px;border-radius:6px;display:grid;place-items:center;background:#f3f4f6;">
+                         <svg width='16' height='16' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10' stroke='#667C4A' stroke-width='1.5' fill='none' /><path d='M12 7.5v4l2 1' stroke='#667C4A' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' /></svg>
+                     </div>
+                     <div style='flex:1;min-width:0;'>
+                         <div style='display:flex;justify-content:space-between;align-items:center;'>
+                             <div style='font-weight:600;color:#1f2937;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>${routeShortName || 'Trip'}</div>
+                             <div style='font-size:12px;color:#9ca3af;'>${delayLabel}</div>
+                         </div>
+                         <div style='margin-top:8px;'>${dualProgressBarsHtml('#e6f4ea','#3b82f6',progressPlanned,progressReal)}</div>
+                     </div>
+                 </div>
+                 <div style='display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;'>
+                     <div style='font-size:12px;color:#6b7280;'><div style='font-size:11px;color:#9ca3af;'>Previous</div><div style='font-weight:600;color:#374151;'>${stopLabelAt(prev)}</div></div>
+                     <div style='font-size:12px;color:#6b7280;'><div style='font-size:11px;color:#9ca3af;'>Next</div><div style='font-weight:600;color:#374151;'>${stopLabelAt(next)}</div></div>
+                 </div>
+                 <div style='font-size:11px;color:#9ca3af;margin-top:8px;'>Estimated position: ${Math.round((dynamicProgress.real||0)*100)}%</div>
+             </div>`;
+    }, [dynamicProgress, stopsLookup, cache.adjustedStopTimesSec, stopTimes, currentDelaySecs, routeShortName]);
+
+    // Bind/unbind tooltip HTML on hover (Leaflet tooltip)
     useEffect(() => {
         const marker = markerRef.current;
         if (!marker) return;
         try {
-            if (hovered && hoverTooltipHtml) {
+            if (hovered) {
+                const html = buildTooltipHtml();
                 marker.unbindTooltip();
-                const opts: LeafletTooltipOptions = {
-                    direction: 'top',
-                    offset: [0, -Math.ceil(diameter / 2)],
-                    permanent: false,
-                    sticky: true,
-                    opacity: 1,
-                    className: 'vehicle-delay-tooltip',
-                };
-                marker.bindTooltip(hoverTooltipHtml, opts);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                marker.bindTooltip(html, { direction: 'top', offset: [0, -Math.ceil(diameter / 2)], permanent: false, sticky: true, opacity: 1, className: 'vehicle-delay-tooltip' } as any);
                 marker.openTooltip();
             } else {
                 marker.unbindTooltip();
             }
-        } catch {}
+        } catch { /* ignore */ }
         return () => { try { marker?.unbindTooltip(); } catch {} };
-    }, [hovered, hoverTooltipHtml, diameter]);
+    }, [hovered, diameter, buildTooltipHtml, realtimeStopTimeUpdates]);
 
     return (
         <Marker
@@ -635,39 +583,14 @@ const Vehicle: React.FC<VehicleProps> = ({
             icon={icon}
             interactive={!!onClick}
             eventHandlers={{
-                click: (e: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
-                    e.originalEvent.stopPropagation();
-                    if (onClick) onClick();
-                },
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                click: (e: any) => { e.originalEvent.stopPropagation(); if (onClick) onClick(); },
                 mouseover: handleMouseOver,
                 mouseout: handleMouseOut,
             }}
-            zIndexOffset={1000}
-        >
-            {/* Tooltip handle natively via bindTooltip/unbindTooltip */}
-        </Marker>
+             zIndexOffset={1000}
+         />
     );
-};
-
-// Générateur HTML pour double barre de progression (planned vs realtime)
-const dualProgressBars = (plannedColor: string, realColor: string, plannedPct: number, realPct: number) => {
-    const p = Math.max(0, Math.min(100, plannedPct));
-    const r = Math.max(0, Math.min(100, realPct));
-    return `
-        <div class='flex flex-col gap-1'>
-            <div class='flex items-center justify-between text-[11px] text-gray-500'>
-                <span>Planned</span><span>${Math.round(p)}%</span>
-            </div>
-            <div class='h-1.5 bg-gray-100 rounded-full overflow-hidden'>
-                <div class='h-full rounded-full' style='width:${p}%;background:${plannedColor};opacity:.85;transition:width .6s ease;'></div>
-            </div>
-            <div class='flex items-center justify-between text-[11px] text-gray-500 mt-1'>
-                <span>Realtime</span><span>${Math.round(r)}%</span>
-            </div>
-            <div class='h-1.5 bg-gray-100 rounded-full overflow-hidden'>
-                <div class='h-full rounded-full' style='width:${r}%;background:${realColor};transition:width .6s ease;'></div>
-            </div>
-        </div>`;
 };
 
 export default Vehicle;
