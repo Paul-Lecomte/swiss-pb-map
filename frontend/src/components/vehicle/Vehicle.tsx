@@ -46,7 +46,7 @@ interface VehicleProps {
     isRunning?: boolean;
     onClick?: () => void;
     zoomLevel?: number;
-    realtimeStopTimeUpdates?: RealtimeStopTimeUpdate[] | null; // ajout temps réel spécifique à ce trip
+    realtimeStopTimeUpdates?: RealtimeStopTimeUpdate[] | null; // realtime updates specific to this trip
     stopsLookup?: Record<string,string> | null;
 }
 
@@ -205,7 +205,7 @@ const Vehicle: React.FC<VehicleProps> = ({
 
     const computePositionForSeconds = useCallback((secondsNow: number): LatLngTuple | null => {
         const c = cache;
-        const segments = c.originalSegments; // utiliser segments basés sur horaires originaux pour mouvement continu
+        const segments = c.originalSegments; // use segments based on original schedule for continuous movement
         if (!c || !segments || segments.length === 0) { if (c.coords && c.coords.length) return c.coords[0]; return null; }
         let seg: typeof segments[0] | null = null;
         for (const s of segments) { if (secondsNow >= s.startSec && secondsNow <= s.endSec) { seg = s; break; } }
@@ -307,7 +307,7 @@ const Vehicle: React.FC<VehicleProps> = ({
             dD: u.departureDelaySecs
         }))) : null;
         if (sig !== lastRtSignatureRef.current) {
-            // Activation adaptation pour transition douce si changements sur des arrêts passés
+            // Enable adaptation to smoothly transition when past stop updates change
             adaptationActiveRef.current = true;
             adaptationStartRef.current = performance.now();
             lastRtSignatureRef.current = sig;
@@ -355,27 +355,26 @@ const Vehicle: React.FC<VehicleProps> = ({
             let interpSeconds = secondsNowFloat;
             if (currentDelaySecs != null) interpSeconds = secondsNowFloat - currentDelaySecs;
             if (firstNonNull != null && lastNonNull != null && lastNonNull > firstNonNull) {
-                // Clamp pour éviter freeze en cas de retard extrême
+                // Clamp to avoid freezing in case of extreme delay
                 if (interpSeconds < firstNonNull) interpSeconds = firstNonNull;
                 else if (interpSeconds > lastNonNull) interpSeconds = lastNonNull;
             }
-            // --- Mise à jour dynamique des progressions Planned vs Realtime ---
+            // --- Dynamic update of Planned vs Realtime progress ---
             try {
                 const planned = computePlannedProgress(secondsNowFloat);
                 const real = computeRealProgress(secondsNowFloat);
-                // Ne mettre à jour le state que si on est en hover (pour limiter re-renders),
-                // ou si la différence est significative (>0.5%) pour rester réactif.
+                // Only update state when hovered (to limit re-renders) or if difference is significant (>0.5%).
                 const diffPlanned = Math.abs(dynamicProgress.planned - planned);
                 const diffReal = Math.abs(dynamicProgress.real - real);
                 if (hoveredRef.current || diffPlanned > 0.005 || diffReal > 0.005) {
                     setDynamicProgress(prev => {
-                        // évite nouvelle assignation si pas de changement notable
+                        // avoid assigning if there is no notable change
                         if (Math.abs(prev.planned - planned) < 1e-6 && Math.abs(prev.real - real) < 1e-6) return prev;
                         return { planned, real };
                     });
                 }
             } catch { /* safe guard */ }
-            // --- fin mise à jour dynamique ---
+            // --- end dynamic update ---
             const rawTarget = computePositionForSeconds(interpSeconds);
             if (!rawTarget) return;
             let target = rawTarget;
@@ -408,7 +407,7 @@ const Vehicle: React.FC<VehicleProps> = ({
                 if (markerRef.current) markerRef.current.setLatLng(target); else setPosition(target);
                 return;
             }
-            // Smoothing dynamique (plus doux si adaptation active)
+            // Dynamic smoothing (softer when adaptation is active)
             const smoothingBase = 0.18;
             const smoothing = adaptationActiveRef.current ? smoothingBase * 0.35 : smoothingBase;
             const newLat = current[0] + (target[0] - current[0]) * smoothing;
@@ -430,7 +429,7 @@ const Vehicle: React.FC<VehicleProps> = ({
     const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
     const baseDiameter = clamp(8 + 1.2 * (zoomLevelState - 10), 8, 22);
 
-    const hoverScale = 2.2; // facteur d'agrandissement au survol
+    const hoverScale = 2.2; // hover scale factor
     const scale = hovered ? hoverScale : 1;
     const diameter = baseDiameter; // keep constant; visual size changes via transform only
     const fontSize = routeShortName ? computeFontSize(routeShortName, diameter) : Math.max(8, Math.floor(diameter / 2));
@@ -438,7 +437,7 @@ const Vehicle: React.FC<VehicleProps> = ({
     // Subtle box-shadow expansion on hover
     const boxShadow = "0 0 3px rgba(0,0,0,0.3)";
 
-    // Analyse temps réel courant (dernier stop passé ou prochain)
+    // Current realtime analysis (last passed stop or next stop)
     const delayClassColor = (() => {
         if (currentDelaySecs == null) return null;
         if (currentDelaySecs > 120) return '#d32f2f';
