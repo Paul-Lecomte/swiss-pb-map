@@ -48,6 +48,9 @@ interface VehicleProps {
     zoomLevel?: number;
     realtimeStopTimeUpdates?: RealtimeStopTimeUpdate[] | null; // realtime updates specific to this trip
     stopsLookup?: Record<string,string> | null;
+    // new props: persistent highlight and a stable key for map lookup
+    isHighlighted?: boolean;
+    vehicleKey?: string;
 }
 
 // Global animation registry to avoid one RAF per vehicle
@@ -128,6 +131,8 @@ const Vehicle: React.FC<VehicleProps> = ({
                                              zoomLevel: zoomFromProps,
                                              realtimeStopTimeUpdates,
                                              stopsLookup,
+                                             isHighlighted = false,
+                                             vehicleKey,
                                          }) => {
     const markerRef = useRef<LeafletMarker | null>(null);
     // High-resolution displayed position smoothing ref (does NOT store history)
@@ -430,12 +435,16 @@ const Vehicle: React.FC<VehicleProps> = ({
     const baseDiameter = clamp(8 + 1.2 * (zoomLevelState - 10), 8, 22);
 
     const hoverScale = 2.2; // hover scale factor
-    const scale = hovered ? hoverScale : 1;
+    const highlightScale = 2.6;
+    const isActive = hovered || isHighlighted;
+    const scale = isActive ? (isHighlighted ? highlightScale : hoverScale) : 1;
     const diameter = baseDiameter; // keep constant; visual size changes via transform only
     const fontSize = routeShortName ? computeFontSize(routeShortName, diameter) : Math.max(8, Math.floor(diameter / 2));
 
     // Subtle box-shadow expansion on hover
-    const boxShadow = "0 0 3px rgba(0,0,0,0.3)";
+    const boxShadow = isHighlighted
+        ? '0 0 18px rgba(59,130,246,0.95)'
+        : (hovered ? '0 0 10px rgba(0,0,0,0.25)' : '0 0 3px rgba(0,0,0,0.3)');
 
     // Current realtime analysis (last passed stop or next stop)
     const delayClassColor = (() => {
@@ -462,10 +471,10 @@ const Vehicle: React.FC<VehicleProps> = ({
         return `${d > 0 ? '+' : '-'}${mins}m`;
     };
 
-    const borderColor = delayClassColor || color;
-    const styleStr = `position:relative;width:${diameter}px;height:${diameter}px;background-color:white;color:${color};font-size:${fontSize}px;font-weight:bold;display:flex;align-items:center;justify-content:center;border-radius:50%;border:2px solid ${borderColor};box-shadow:${boxShadow};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;will-change:transform,box-shadow;transform:scale(${scale});transition:transform 0.45s cubic-bezier(.33,1,.68,1),box-shadow 0.45s, border-color 0.6s;`;
+    const borderColorFinal = isHighlighted ? '#3b82f6' : (delayClassColor || color);
+    const styleStr = `position:relative;width:${diameter}px;height:${diameter}px;background-color:white;color:${color};font-size:${fontSize}px;font-weight:bold;display:flex;align-items:center;justify-content:center;border-radius:50%;border:2px solid ${borderColorFinal};box-shadow:${boxShadow};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;will-change:transform,box-shadow;transform:scale(${scale});transition:transform 0.9s cubic-bezier(.22,.8,.25,1),box-shadow 0.6s, border-color 0.6s;`;
     const needsPulse = currentDelaySecs != null && Math.abs(currentDelaySecs) > 300;
-    const pulseKeyframes = needsPulse ? `<style>@keyframes vehPulse{0%{box-shadow:0 0 3px rgba(0,0,0,.3);}50%{box-shadow:0 0 10px ${borderColor};}100%{box-shadow:0 0 3px rgba(0,0,0,.3);}}</style>` : '';
+    const pulseKeyframes = needsPulse ? `<style>@keyframes vehPulse{0%{box-shadow:0 0 3px rgba(0,0,0,.3);}50%{box-shadow:0 0 10px ${borderColorFinal};}100%{box-shadow:0 0 3px rgba(0,0,0,.3);}}</style>` : '';
     const sideDelayLabelHtml = (currentDelaySecs != null)
         ? `${pulseKeyframes}<div style=\"position:absolute;top:50%;left:100%;transform:translate(6px,-50%);background:${delayClassColor};color:#fff;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;white-space:nowrap;box-shadow:0 0 4px rgba(0,0,0,0.25);\">${formatDelayLabel(currentDelaySecs)}</div>`
         : '';
@@ -574,6 +583,24 @@ const Vehicle: React.FC<VehicleProps> = ({
         } catch { /* ignore */ }
         return () => { try { marker?.unbindTooltip(); } catch {} };
     }, [hovered, diameter, buildTooltipHtml, realtimeStopTimeUpdates]);
+
+    // Expose the vehicleKey on the Leaflet marker so Map can find and follow it
+    useEffect(() => {
+        const m = markerRef.current as unknown as { options: Record<string, unknown> } | null;
+        if (!m) return;
+        try {
+            m.options = m.options || {} as Record<string, unknown>;
+            if (vehicleKey) (m.options as Record<string, unknown>)["_vehicleKey"] = vehicleKey;
+            else delete (m.options as Record<string, unknown>)["_vehicleKey"];
+        } catch {}
+    }, [vehicleKey]);
+
+    // Raise z-index when highlighted so the marker stays above others
+    useEffect(() => {
+        const el = markerRef.current?.getElement?.();
+        if (!el) return;
+        try { (el as HTMLElement).style.zIndex = isHighlighted ? '9999' : ''; } catch {}
+    }, [isHighlighted]);
 
     return (
         <Marker

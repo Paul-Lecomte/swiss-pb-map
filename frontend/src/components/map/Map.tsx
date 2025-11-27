@@ -849,6 +849,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
                         return (
                             <Vehicle
                                 key={`veh-${id}-${idx}`}
+                                vehicleKey={`veh-${id}-${idx}`}
                                 routeId={id}
                                 routeShortName={fullRoute.properties?.route_short_name}
                                 coordinates={coordsForThis}
@@ -858,6 +859,13 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
                                 onClick={() => handleVehicleClick(fullRoute, idx, tripIdForThis)}
                                 zoomLevel={zoom}
                                 realtimeStopTimeUpdates={realtimeStopTimeUpdates}
+                                isHighlighted={
+                                    !!selectedRoute &&
+                                    (
+                                        ((selectedRoute.properties?.route_id) || `${selectedRoute.properties?.route_short_name}-${selectedRoute.properties?.route_long_name}`) === id
+                                    ) &&
+                                    selectedTripIndex === idx
+                                }
                             />
                         );
                     });
