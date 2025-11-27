@@ -22,13 +22,15 @@ export default function StreamProgress({ total, received, elapsedMs, loading }: 
     }}>
       <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
         <span>Routes</span>
-        <span>{received}{total ? ` / ${total}` : ""}</span>
+        <span>{received}</span>
       </div>
-      {pct != null && (
+        <div className="invisible">
+        {pct != null && (
         <div style={{height: 6, background: 'rgba(255,255,255,0.2)', borderRadius: 4}}>
           <div style={{height: '100%', width: `${pct}%`, background: '#4caf50', borderRadius: 4}} />
         </div>
-      )}
+        )}
+        </div>
       <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
         <span>Status</span>
         <span>{loading ? 'Streaming…' : 'Done'}</span>
