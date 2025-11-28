@@ -261,6 +261,22 @@ const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose, selecte
         return () => { window.clearTimeout(t); };
     }, [routeId, selectedIndex, progress]);
 
+    // Prevent map interactions (zoom/pan) when interacting within the panel
+    useEffect(() => {
+        const el = containerRef.current;
+        if (!el) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const L = await import('leaflet');
+                if (cancelled) return;
+                L.DomEvent.disableScrollPropagation(el);
+                L.DomEvent.disableClickPropagation(el);
+            } catch {}
+        })();
+        return () => { cancelled = true; };
+    }, []);
+
     // Delay color helpers (CSS utility classes)
     const delayColors = {
         late2: "text-red-600",
@@ -281,7 +297,14 @@ const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose, selecte
     };
 
     return (
-        <div ref={containerRef} className="absolute top-[85px] left-4 w-[30%] max-w-[400px] h-[80vh] bg-white rounded-lg shadow-lg font-[Segoe_UI] overflow-y-auto p-4 z-[9999] transition-all duration-300 md:w-[40%] sm:w-[90%] sm:left-[5%] sm:top-[70px] sm:h-[70vh]">
+        <div
+            ref={containerRef}
+            onWheel={(e) => { e.stopPropagation(); }}
+            onWheelCapture={(e) => { e.stopPropagation(); }}
+            onMouseDown={(e) => { e.stopPropagation(); }}
+            onTouchMove={(e) => { e.stopPropagation(); }}
+            className="absolute top-[85px] left-4 w-[30%] max-w-[400px] h-[80vh] bg-white rounded-lg shadow-lg font-[Segoe_UI] overflow-y-auto p-4 z-[9999] transition-all duration-300 md:w-[40%] sm:w-[90%] sm:left-[5%] sm:top-[70px] sm:h-[70vh] overscroll-contain"
+        >
             {/* HEADER */}
             <div className="flex items-center mb-3 relative">
                 <div className="bg-red-700 p-2 text-white rounded-full flex items-center justify-center font-bold text-lg mr-3">
