@@ -46,12 +46,14 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
 
     const [minLng, minLat, maxLng, maxLat] = bbox.split(',').map(Number);
 
-    // Nouveaux paramètres d'optimisation
+    // New optimization parameters
     const includeStaticParam = String(req.query.include_static ?? '1');
     const includeStaticDefault = includeStaticParam === '1' || includeStaticParam === 'true';
     const knownSet = new Set((req.query.known ? String(req.query.known).split(',').filter(Boolean) : []));
     const onlyNew = String(req.query.only_new ?? '0') === '1' || String(req.query.only_new ?? '0') === 'true';
     const maxTrips = Math.max(1, Math.min( Number(req.query.max_trips ?? 20), 200));
+    // New: cap how many routes to process from bbox
+    const maxRoutes = Math.max(1, Math.min(Number(req.query.max_routes ?? 100), 500));
 
     // Initial minimal projection for routes within bbox
     const routeProjection = {
@@ -73,7 +75,7 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
         'bounds.max_lat': { $gte: minLat },
         'bounds.min_lon': { $lte: maxLng },
         'bounds.max_lon': { $gte: minLng },
-    }, routeProjection).limit(100).lean();
+    }, routeProjection).limit(maxRoutes).lean();
 
     // Filter known routes if onlyNew is requested
     const candidateRoutes = onlyNew ? routes.filter(r => !knownSet.has(r.route_id)) : routes;
@@ -86,7 +88,7 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
 
     // ----------------- Core Logic for processing a single route (refactored for reuse) -----------------
     const processRouteData = async (route) => {
-        // Statique seulement si non connu et demandé globalement
+        // Static only if unknown and globally requested
         const includeStaticForThis = includeStaticDefault && !knownSet.has(route.route_id);
 
         // Fetch stop times for this specific route, with minimal projection
@@ -171,7 +173,7 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
         if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
         const startedAt = Date.now();
-        res.write(JSON.stringify({ meta: true, bbox, totalRoutes: routes.length, filteredRoutes: candidateRoutes.length, knownCount: knownSet.size, onlyNew, startedAt, maxTrips }) + '\n');
+        res.write(JSON.stringify({ meta: true, bbox, totalRoutes: routes.length, filteredRoutes: candidateRoutes.length, knownCount: knownSet.size, onlyNew, startedAt, maxTrips, maxRoutes }) + '\n');
 
         if (!candidateRoutes.length) {
             res.write(JSON.stringify({ end: true, count: 0, elapsedMs: 0 }) + '\n');
