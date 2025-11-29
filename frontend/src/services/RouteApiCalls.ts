@@ -1,6 +1,8 @@
 // Base URL configurable via NEXT_PUBLIC_API_BASE_URL (fallback to localhost)
-const API_BASE_URL = (typeof process !== 'undefined' && (process as any).env && (process as any).env.NEXT_PUBLIC_API_BASE_URL)
-  ? (process as any).env.NEXT_PUBLIC_API_BASE_URL.replace(/\/$/, '')
+interface EnvProcess { env?: { NEXT_PUBLIC_API_BASE_URL?: string } }
+const maybeProc: EnvProcess | undefined = typeof process !== 'undefined' ? (process as unknown as EnvProcess) : undefined;
+const API_BASE_URL = maybeProc?.env?.NEXT_PUBLIC_API_BASE_URL
+  ? String(maybeProc.env.NEXT_PUBLIC_API_BASE_URL).replace(/\/$/, '')
   : "http://localhost:3000/api";
 
 export async function fetchRoutesInBbox(bbox: number[], zoom: number) {
@@ -13,7 +15,7 @@ export async function fetchRoutesInBbox(bbox: number[], zoom: number) {
 export async function streamRoutesInBbox(
   bbox: number[],
   zoom: number,
-  onFeature: (feature: any) => void,
+  onFeature: (feature: unknown) => void,
   opts?: {
     signal?: AbortSignal,
     knownIds?: string[],
@@ -21,8 +23,9 @@ export async function streamRoutesInBbox(
     maxTrips?: number,
     concurrency?: number,
     onlyNew?: boolean,
-    onMeta?: (meta: any) => void,
-    onEnd?: (summary: any) => void,
+    maxRoutes?: number,
+    onMeta?: (meta: unknown) => void,
+    onEnd?: (summary: unknown) => void,
   }
 ): Promise<{ count: number }> {
   const bboxStr = bbox.join(',');
@@ -35,6 +38,7 @@ export async function streamRoutesInBbox(
   if (opts?.maxTrips != null) params.set('max_trips', String(opts.maxTrips));
   if (opts?.concurrency != null) params.set('concurrency', String(opts.concurrency));
   if (opts?.onlyNew != null) params.set('only_new', opts.onlyNew ? '1' : '0');
+  if (opts?.maxRoutes != null) params.set('max_routes', String(opts.maxRoutes));
   const url = `${API_BASE_URL}/routes/routes-in-bbox?${params.toString()}`;
 
   const res = await fetch(url, {
@@ -45,7 +49,7 @@ export async function streamRoutesInBbox(
   const contentType = res.headers.get('content-type') || '';
   if (!res.body || contentType.includes('application/json') && !contentType.includes('ndjson')) {
     const json = await res.json().catch(() => ({ type: 'FeatureCollection', features: [] }));
-    const features = Array.isArray(json?.features) ? json.features : [];
+    const features = Array.isArray((json as any)?.features) ? (json as any).features : [];
     for (const f of features) onFeature(f);
     if (opts?.onEnd) opts.onEnd({ count: features.length, fallback: true });
     return { count: features.length };
@@ -68,19 +72,17 @@ export async function streamRoutesInBbox(
       if (line) {
         try {
           const obj = JSON.parse(line);
-          if (obj && obj.type === 'Feature') {
+          if ((obj as any) && (obj as any).type === 'Feature') {
             onFeature(obj);
             count += 1;
-          } else if (obj && obj.meta) {
+          } else if ((obj as any) && (obj as any).meta) {
             if (opts?.onMeta) opts.onMeta(obj);
-          } else if (obj && obj.end) {
+          } else if ((obj as any) && (obj as any).end) {
             if (opts?.onEnd) opts.onEnd(obj);
-          } else if (obj && obj.error) {
-            // eslint-disable-next-line no-console
+          } else if ((obj as any) && (obj as any).error) {
             console.error('[streamRoutesInBbox] error line', obj);
           }
-        } catch (e) {
-          // eslint-disable-next-line no-console
+        } catch {
             console.warn('[streamRoutesInBbox] invalid json line', line);
         }
       }
@@ -92,10 +94,10 @@ export async function streamRoutesInBbox(
   if (last) {
     try {
       const obj = JSON.parse(last);
-      if (obj && obj.type === 'Feature') {
+      if ((obj as any) && (obj as any).type === 'Feature') {
         onFeature(obj);
         count += 1;
-      } else if (obj && obj.end) {
+      } else if ((obj as any) && (obj as any).end) {
         if (opts?.onEnd) opts.onEnd(obj);
       }
     } catch {}
