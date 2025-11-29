@@ -23,7 +23,7 @@ import StreamProgress from "@/components/progress/StreamProgress";
 // Layer visibility state type
 type LayerKeys = "railway" | "stations" | "tram" | "bus" | "trolleybus" | "ferry" | "backgroundPois";
 
-const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }: { onHamburger: () => void; layersVisible: LayerState; setLayersVisible: React.Dispatch<React.SetStateAction<LayerState>>; optionPrefs?: { showRealtimeOverlay: boolean; showRouteProgress: boolean } }) => {
+const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }: { onHamburger: () => void; layersVisible: LayerState; setLayersVisible: React.Dispatch<React.SetStateAction<LayerState>>; optionPrefs?: { showRealtimeOverlay: boolean; showRouteProgress: boolean; maxRoutes?: number } }) => {
     const [stops, setStops] = useState<any[]>([]);
     const [zoom, setZoom] = useState(13);
     const [tileLayer, setTileLayer] = useState(layers[0]);
@@ -231,6 +231,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
             });
         };
         const maxTripsByZoom = zoom >= 15 ? 50 : zoom >= 13 ? 50 : 50;
+        const maxRoutesToFetch = optionPrefs?.maxRoutes ?? 100;
         // Setup abort controller for this stream
         const abortController = new AbortController();
         streamAbortRef.current = abortController;
@@ -308,7 +309,8 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
                     stream: true,
                     batchSize: 30,
                     batchMs: 150,
-                    token
+                    token,
+                    maxRoutes: maxRoutesToFetch,
                 });
             });
         }
@@ -365,6 +367,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
                     maxTrips: maxTripsByZoom,
                     concurrency: 10,
                     onlyNew: true,
+                    maxRoutes: maxRoutesToFetch,
                     onMeta: (m) => setStreamInfo(prev => ({ ...prev, total: m.filteredRoutes ?? m.totalRoutes })),
                     onEnd: (e) => setStreamInfo(prev => ({ ...prev, loading: false, elapsedMs: e.elapsedMs }))
                 }
