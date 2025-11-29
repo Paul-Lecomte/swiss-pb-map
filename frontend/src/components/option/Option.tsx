@@ -24,7 +24,7 @@ export default function Option({ onClose, prefs, setPrefs }: Props) {
         const raw = e.target.value;
         const num = Number(raw);
         if (!Number.isFinite(num)) {
-            setLocalMaxRoutes(40);
+            setLocalMaxRoutes(100);
             return;
         }
         // Do not update prefs yet — just local state
