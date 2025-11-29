@@ -17,6 +17,7 @@ self.addEventListener('message', async (evt) => {
     stream = true,
     batchSize = 25,
     batchMs = 200,
+    maxRoutes = 100,
   } = msg;
 
   let aborted = false;
@@ -44,6 +45,7 @@ self.addEventListener('message', async (evt) => {
     params.set('max_trips', String(maxTrips));
     params.set('concurrency', String(concurrency));
     params.set('only_new', onlyNew ? '1' : '0');
+    params.set('max_routes', String(maxRoutes));
     const url = `${apiBase.replace(/\/$/, '')}/routes/routes-in-bbox?${params.toString()}`;
 
     const res = await fetch(url, {
