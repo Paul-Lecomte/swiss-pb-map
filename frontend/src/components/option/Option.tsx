@@ -11,11 +11,37 @@ export default function Option({ onClose, prefs, setPrefs }: Props) {
         if (!setPrefs || !prefs) return;
         setPrefs(prev => ({ ...prev, [key]: e.target.checked }));
     };
-    const onMaxRoutesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    // Local state to avoid applying on every keystroke
+    const [localMaxRoutes, setLocalMaxRoutes] = React.useState<number>(prefs?.maxRoutes ?? 40);
+    React.useEffect(() => {
+        // sync when prefs change externally
+        if (typeof prefs?.maxRoutes === 'number') {
+            setLocalMaxRoutes(prefs.maxRoutes);
+        }
+    }, [prefs?.maxRoutes]);
+
+    const onMaxRoutesChangeLocal = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const raw = e.target.value;
+        const num = Number(raw);
+        if (!Number.isFinite(num)) {
+            setLocalMaxRoutes(40);
+            return;
+        }
+        // Do not update prefs yet — just local state
+        setLocalMaxRoutes(num);
+    };
+    const clamp = (v: number) => Math.max(1, Math.min(v, 500));
+    const applyMaxRoutes = (nextVal?: number) => {
         if (!setPrefs) return;
-        const val = Math.max(1, Math.min(Number(e.target.value || 0), 500));
+        const val = clamp(typeof nextVal === 'number' ? nextVal : localMaxRoutes);
+        setLocalMaxRoutes(val);
         setPrefs(prev => ({ ...prev, maxRoutes: val }));
     };
+    const onMaxRoutesBlur = () => applyMaxRoutes();
+    const onMaxRoutesKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === 'Enter') applyMaxRoutes();
+    };
+
     return (
         <Paper elevation={6} sx={{ width: 280, borderRadius: 3, p: 2 }}>
             <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
@@ -38,8 +64,10 @@ export default function Option({ onClose, prefs, setPrefs }: Props) {
                     label="Max routes to fetch"
                     type="number"
                     inputProps={{ min: 1, max: 500 }}
-                    value={prefs?.maxRoutes ?? 100}
-                    onChange={onMaxRoutesChange}
+                    value={localMaxRoutes}
+                    onChange={onMaxRoutesChangeLocal}
+                    onBlur={onMaxRoutesBlur}
+                    onKeyDown={onMaxRoutesKeyDown}
                     size="small"
                 />
             </Box>
