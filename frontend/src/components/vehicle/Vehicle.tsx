@@ -48,6 +48,8 @@ interface VehicleProps {
     zoomLevel?: number;
     realtimeStopTimeUpdates?: RealtimeStopTimeUpdate[] | null; // realtime updates specific to this trip
     stopsLookup?: Record<string,string> | null;
+    // new prop: provide full stops array from route response for best name resolution
+    routeStops?: Array<{ stop_id: string; stop_name?: string }>;
     // new props: persistent highlight and a stable key for map lookup
     isHighlighted?: boolean;
     vehicleKey?: string;
@@ -131,9 +133,34 @@ const Vehicle: React.FC<VehicleProps> = ({
                                              zoomLevel: zoomFromProps,
                                              realtimeStopTimeUpdates,
                                              stopsLookup,
+                                             routeStops,
                                              isHighlighted = false,
                                              vehicleKey,
                                          }) => {
+    // Build a local fallback lookup from stop_id -> stop_name using provided stopTimes
+    const localStopsLookup = useMemo<Record<string, string>>(() => {
+        const map: Record<string, string> = {};
+        for (const st of stopTimes || []) {
+            const id = st.stop_id;
+            const name = st.stop_name;
+            if (id && name) {
+                if (!map[id]) map[id] = name;
+            }
+        }
+        return map;
+    }, [stopTimes]);
+
+    // Build a primary lookup from routeStops (provided by main route response)
+    const routeStopsLookup = useMemo<Record<string, string>>(() => {
+        const map: Record<string, string> = {};
+        for (const st of routeStops || []) {
+            if (st?.stop_id && st.stop_name) {
+                if (!map[st.stop_id]) map[st.stop_id] = st.stop_name;
+            }
+        }
+        return map;
+    }, [routeStops]);
+
     const markerRef = useRef<LeafletMarker | null>(null);
     // High-resolution displayed position smoothing ref (does NOT store history)
     const displayedPosRef = useRef<LatLngTuple | null>(null);
@@ -541,7 +568,13 @@ const Vehicle: React.FC<VehicleProps> = ({
          const stopLabelAt = (idx: number | null) => {
              if (idx == null || !stopTimes[idx]) return 'N/A';
              const st = stopTimes[idx];
-             return (stopsLookup && st.stop_id ? stopsLookup[st.stop_id] : null) || st.stop_name || st.stop_id || 'Stop';
+             // Resolution priority: routeStopsLookup -> external stopsLookup -> localStopsLookup -> embedded stop_name
+             const nameFromRoute = (routeStopsLookup && st.stop_id) ? routeStopsLookup[st.stop_id] : undefined;
+             if (nameFromRoute) return nameFromRoute;
+             const nameFromExternal = (stopsLookup && st.stop_id) ? stopsLookup[st.stop_id] : undefined;
+             if (nameFromExternal) return nameFromExternal;
+             const nameFromLocal = (localStopsLookup && st.stop_id) ? localStopsLookup[st.stop_id] : undefined;
+             return nameFromLocal || st.stop_name || 'Unknown stop';
          };
          const delayLabel = currentDelaySecs == null ? 'On time' : (currentDelaySecs > 0 ? `Delay ${formatDelayLabel(currentDelaySecs)}` : `Early ${formatDelayLabel(currentDelaySecs)}`);
          return `
@@ -564,7 +597,7 @@ const Vehicle: React.FC<VehicleProps> = ({
                  </div>
                  <div style='font-size:11px;color:#9ca3af;margin-top:8px;'>Estimated position: ${Math.round((dynamicProgress.real||0)*100)}%</div>
              </div>`;
-    }, [dynamicProgress, stopsLookup, cache.adjustedStopTimesSec, stopTimes, currentDelaySecs, routeShortName]);
+    }, [dynamicProgress, stopsLookup, localStopsLookup, routeStopsLookup, cache.adjustedStopTimesSec, stopTimes, currentDelaySecs, routeShortName]);
 
     // Bind/unbind tooltip HTML on hover (Leaflet tooltip)
     useEffect(() => {
