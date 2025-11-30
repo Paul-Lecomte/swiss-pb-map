@@ -862,6 +862,8 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
                                 onClick={() => handleVehicleClick(fullRoute, idx, tripIdForThis)}
                                 zoomLevel={zoom}
                                 realtimeStopTimeUpdates={realtimeStopTimeUpdates}
+                                // Provide backend stop list for name resolution
+                                routeStops={stops}
                                 isHighlighted={
                                     !!selectedRoute &&
                                     (
