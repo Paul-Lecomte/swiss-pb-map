@@ -557,16 +557,38 @@ const Vehicle: React.FC<VehicleProps> = ({
     const buildTooltipHtml = useCallback(() => {
          const progressPlanned = Math.round((dynamicProgress.planned || 0) * 100);
          const progressReal = Math.round((dynamicProgress.real || 0) * 100);
-         const now = getEffectiveNowSecHighRes(new Date());
-         const timesForPrevNext = cache.adjustedStopTimesSec;
-         let prev: number | null = null; let next: number | null = null;
-         for (let i = 0; i < timesForPrevNext.length; i++) {
-             const t = timesForPrevNext[i];
-             if (t != null && t <= now) prev = i;
-             if (t != null && t > now) { next = i; break; }
+         // Use the same effective schedule time used for positional interpolation (so prev/next are consistent even with delay/early cases)
+         const nowFloat = getEffectiveNowSecHighRes(new Date());
+         let scheduleSec = nowFloat;
+         if (currentDelaySecs != null) {
+             // We shift along the ORIGINAL schedule timeline by subtracting the delay (negative delay => move forward, positive => move backward)
+             scheduleSec = nowFloat - currentDelaySecs;
+         }
+         // Clamp inside trip span to avoid being past last stop producing missing next stop unexpectedly
+         if (firstNonNull != null && lastNonNull != null && lastNonNull > firstNonNull) {
+             if (scheduleSec < firstNonNull) scheduleSec = firstNonNull;
+             if (scheduleSec > lastNonNull) scheduleSec = lastNonNull;
+         }
+         // Determine prev/next indices using ORIGINAL scheduled times for stability
+         const originalTimes = cache.originalStopTimesSec;
+         let prev: number | null = null;
+         let next: number | null = null;
+         for (let i = 0; i < originalTimes.length; i++) {
+             const t = originalTimes[i];
+             if (t == null) continue;
+             if (t <= scheduleSec) prev = i;
+             if (t > scheduleSec) { next = i; break; }
+         }
+         // Graceful fallbacks when at very beginning or end
+         if (prev == null) {
+             // Before first valid time – next becomes first non-null
+             next = originalTimes.findIndex(t => t != null);
+         } else if (next == null) {
+             // After last valid time – keep prev as last, show no further next
+             next = null; // explicit
          }
          const stopLabelAt = (idx: number | null) => {
-             if (idx == null || !stopTimes[idx]) return 'N/A';
+             if (idx == null || !stopTimes[idx]) return idx == null ? 'End of trip' : 'N/A';
              const st = stopTimes[idx];
              // Resolution priority: routeStopsLookup -> external stopsLookup -> localStopsLookup -> embedded stop_name
              const nameFromRoute = (routeStopsLookup && st.stop_id) ? routeStopsLookup[st.stop_id] : undefined;
@@ -593,11 +615,11 @@ const Vehicle: React.FC<VehicleProps> = ({
                  </div>
                  <div style='display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;'>
                      <div style='font-size:12px;color:#6b7280;'><div style='font-size:11px;color:#9ca3af;'>Previous</div><div style='font-weight:600;color:#374151;'>${stopLabelAt(prev)}</div></div>
-                     <div style='font-size:12px;color:#6b7280;'><div style='font-size:11px;color:#9ca3af;'>Next</div><div style='font-weight:600;color:#374151;'>${stopLabelAt(next)}</div></div>
+                     <div style='font-size:12px;color:#6b7280;'><div style='font-size:11px;color:#9ca3af;'>Next</div><div style='font-weight:600;color:#374151;'>${next == null ? 'End of trip' : stopLabelAt(next)}</div></div>
                  </div>
                  <div style='font-size:11px;color:#9ca3af;margin-top:8px;'>Estimated position: ${Math.round((dynamicProgress.real||0)*100)}%</div>
              </div>`;
-    }, [dynamicProgress, stopsLookup, localStopsLookup, routeStopsLookup, cache.adjustedStopTimesSec, stopTimes, currentDelaySecs, routeShortName]);
+    }, [dynamicProgress, stopsLookup, localStopsLookup, routeStopsLookup, cache.originalStopTimesSec, stopTimes, currentDelaySecs, routeShortName, firstNonNull, lastNonNull, getEffectiveNowSecHighRes]);
 
     // Bind/unbind tooltip HTML on hover (Leaflet tooltip)
     useEffect(() => {
