@@ -324,6 +324,11 @@ const Vehicle: React.FC<VehicleProps> = ({
     }, [realtimeStopTimeUpdates, getEffectiveNowSecHighRes]);
     const currentDelaySecs = computeCurrentDelaySecs();
 
+    // Track trip finished state to hide marker when trip ended
+    const [finished, setFinished] = useState(false);
+    const finishedRef = useRef(finished);
+    useEffect(() => { finishedRef.current = finished; }, [finished]);
+
     // Anti-snap adaptation when past stop-time updates change (smooth transition)
     const adaptationActiveRef = useRef(false);
     const adaptationStartRef = useRef<number>(0);
@@ -382,25 +387,41 @@ const Vehicle: React.FC<VehicleProps> = ({
     useEffect(() => {
         // Register global animation callback instead of per-component RAF loop
         const update = () => {
+            if (finishedRef.current) return; // stop updates once finished
             const now = new Date();
             const secondsNowFloat = getEffectiveNowSecHighRes(now);
             let interpSeconds = secondsNowFloat;
             if (currentDelaySecs != null) interpSeconds = secondsNowFloat - currentDelaySecs;
             if (firstNonNull != null && lastNonNull != null && lastNonNull > firstNonNull) {
-                // Clamp to avoid freezing in case of extreme delay
                 if (interpSeconds < firstNonNull) interpSeconds = firstNonNull;
                 else if (interpSeconds > lastNonNull) interpSeconds = lastNonNull;
+            }
+            // Detect end-of-trip (allow slight buffer so marker reaches last stop visually before disappearing)
+            if (!finishedRef.current && lastNonNull != null) {
+                // scheduleSec on original timeline
+                let scheduleSec = secondsNowFloat;
+                if (currentDelaySecs != null) scheduleSec = secondsNowFloat - currentDelaySecs;
+                // Day shifting logic similar to effective functions
+                if (firstNonNull != null && lastNonNull != null) {
+                    for (let k = -1; k <= 1; k++) {
+                        const shifted = scheduleSec + k * 86400;
+                        if (shifted >= firstNonNull && shifted <= lastNonNull + 30) { scheduleSec = shifted; break; }
+                    }
+                }
+                if (scheduleSec >= lastNonNull + 5) { // 5s buffer after last stop time
+                    finishedRef.current = true;
+                    setFinished(true);
+                    return; // cease further updates; component will unmount on next render
+                }
             }
             // --- Dynamic update of Planned vs Realtime progress ---
             try {
                 const planned = computePlannedProgress(secondsNowFloat);
                 const real = computeRealProgress(secondsNowFloat);
-                // Only update state when hovered (to limit re-renders) or if difference is significant (>0.5%).
                 const diffPlanned = Math.abs(dynamicProgress.planned - planned);
                 const diffReal = Math.abs(dynamicProgress.real - real);
                 if (hoveredRef.current || diffPlanned > 0.005 || diffReal > 0.005) {
                     setDynamicProgress(prev => {
-                        // avoid assigning if there is no notable change
                         if (Math.abs(prev.planned - planned) < 1e-6 && Math.abs(prev.real - real) < 1e-6) return prev;
                         return { planned, real };
                     });
@@ -410,8 +431,6 @@ const Vehicle: React.FC<VehicleProps> = ({
             const rawTarget = computePositionForSeconds(interpSeconds);
             if (!rawTarget) return;
             let target = rawTarget;
-
-            // Anti-snap adaptation: if an update happened recently and there's a large jump
             if (adaptationActiveRef.current) {
                 const elapsed = performance.now() - adaptationStartRef.current;
                 const currentPos = displayedPosRef.current;
@@ -432,14 +451,12 @@ const Vehicle: React.FC<VehicleProps> = ({
                     adaptationActiveRef.current = false;
                 }
             }
-
             const current = displayedPosRef.current;
             if (!current) {
                 displayedPosRef.current = target;
                 if (markerRef.current) markerRef.current.setLatLng(target); else setPosition(target);
                 return;
             }
-            // Dynamic smoothing (softer when adaptation is active)
             const smoothingBase = 0.18;
             const smoothing = adaptationActiveRef.current ? smoothingBase * 0.35 : smoothingBase;
             const newLat = current[0] + (target[0] - current[0]) * smoothing;
@@ -656,6 +673,8 @@ const Vehicle: React.FC<VehicleProps> = ({
         if (!el) return;
         try { (el as HTMLElement).style.zIndex = isHighlighted ? '9999' : ''; } catch {}
     }, [isHighlighted]);
+
+    if (finished) return null;
 
     return (
         <Marker
