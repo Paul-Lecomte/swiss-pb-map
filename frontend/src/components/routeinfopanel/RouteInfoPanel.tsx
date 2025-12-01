@@ -121,7 +121,7 @@ const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose, selecte
         return stops;
     }, [normalizedStops, route, selectedIndex]);
 
-    // 4) Realtime mapping by stopSequence => delays and absolute times
+    // 4) Realtime mapping by stopSequence => delays and absolute times (used only for labels/colors)
     const realtimeBySequence = useMemo(() => {
         const m = new Map<number, { arrivalDelay: number | null; departureDelay: number | null; arrivalTimeSecs: number | null; departureTimeSecs: number | null }>();
         const ups = realtimeTripUpdate?.stopTimeUpdates || [];
@@ -144,7 +144,46 @@ const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose, selecte
         }
     }, [route, normalizedStops, selectedIndex, selectedTripId]);
 
-    // 5) Compute continuous progress (0..1) based on realtime absolute times when available
+    // Build planned times (seconds) for the selected trip at each stop (no realtime here)
+    const plannedTimesSec = useMemo(() => {
+        const out: Array<number | null> = [];
+        for (let i = 0; i < stopsToRender.length; i++) {
+            const stop = stopsToRender[i];
+            const times = stop.stop_times || [];
+            const st = times[selectedIndex] || times.find(t => t?.arrival_time || t?.departure_time) || times[0];
+            if (!st) { out.push(null); continue; }
+            const tSecPlanned = parseGtfsTime(st.departure_time || st.arrival_time || undefined);
+            out.push(tSecPlanned);
+        }
+        return out;
+    }, [stopsToRender, selectedIndex]);
+
+    const firstPlanned = useMemo(() => plannedTimesSec.find(t => t != null) ?? null, [plannedTimesSec]);
+    const lastPlanned = useMemo(() => [...plannedTimesSec].reverse().find(t => t != null) ?? null, [plannedTimesSec]);
+
+    // Estimate current delay (seconds) from realtime updates; fallback null when unknown
+    const computeCurrentDelaySecs = useMemo(() => {
+        return () => {
+            const ups = realtimeTripUpdate?.stopTimeUpdates || [];
+            if (!ups.length) return null;
+            // Choose the most relevant update around now (use absolute time when present)
+            const now = new Date();
+            const nowSecFloat = (now.getHours() * 3600) + (now.getMinutes() * 60) + now.getSeconds() + now.getMilliseconds() / 1000;
+            const enriched = ups.map(u => {
+                const time = (u.departureTimeSecs != null ? u.departureTimeSecs : u.arrivalTimeSecs);
+                const delay = (u.departureDelaySecs != null ? u.departureDelaySecs : u.arrivalDelaySecs);
+                return { time, delay };
+            }).filter(e => e.time != null);
+            if (!enriched.length) return null;
+            const past = enriched.filter(e => (e.time as number) <= nowSecFloat).sort((a,b) => (b.time as number) - (a.time as number));
+            if (past.length) return past[0].delay ?? null;
+            const future = enriched.filter(e => (e.time as number) > nowSecFloat).sort((a,b) => (a.time as number) - (b.time as number));
+            if (future.length) return future[0].delay ?? null;
+            return null;
+        };
+    }, [realtimeTripUpdate]);
+
+    // 5) Compute continuous progress (0..1) based on planned span, shifted by the current delay
     const [progress, setProgress] = useState<number>(0);
     const timerRef = useRef<number | null>(null);
 
@@ -154,78 +193,50 @@ const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose, selecte
     const didAutoScrollRef = useRef<string | null>(null);
 
     const computeProgress = useMemo(() => {
-        // Absolute times (seconds) for the selected trip at each stop
-        const absTimes: Array<number | null> = [];
-        for (let i = 0; i < stopsToRender.length; i++) {
-            const stop = stopsToRender[i];
-            const times = stop.stop_times || [];
-            const st =
-                times[selectedIndex] ||
-                times.find((t) => t?.arrival_time || t?.departure_time) ||
-                times[0];
-            if (!st) {
-                absTimes.push(null);
-                continue;
-            }
-            const rt = realtimeBySequence.get(st.stop_sequence ?? -999);
-            const tSecRt = (rt?.departureTimeSecs ?? rt?.arrivalTimeSecs) ?? null;
-            const tSecPlanned = parseGtfsTime(st.departure_time || st.arrival_time || undefined);
-            absTimes.push(tSecRt != null ? tSecRt : tSecPlanned);
-        }
-        const first = absTimes.find((t) => t != null) ?? null;
-        const last = [...absTimes].reverse().find((t) => t != null) ?? null;
         return (now: Date) => {
-            if (first == null || last == null || last <= first) return 0;
-            const nowSec =
-                now.getHours() * 3600 +
-                now.getMinutes() * 60 +
-                now.getSeconds() +
-                now.getMilliseconds() / 1000;
+            if (firstPlanned == null || lastPlanned == null || lastPlanned <= firstPlanned) return 0;
+            const nowSec = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds() + now.getMilliseconds() / 1000;
             // Shift across days to handle >24:00 and midnight wrap
-            let effective = nowSec;
+            let effectiveNow = nowSec;
             for (let k = -1; k <= 1; k++) {
                 const shifted = nowSec + k * 86400;
-                if (shifted >= first && shifted <= last) {
-                    effective = shifted;
-                    break;
-                }
+                if (shifted >= firstPlanned && shifted <= lastPlanned) { effectiveNow = shifted; break; }
             }
-            const p = (effective - first) / (last - first);
+            const currDelay = computeCurrentDelaySecs();
+            // Effective schedule seconds along the original timeline
+            let scheduleSec = effectiveNow;
+            if (currDelay != null) scheduleSec = effectiveNow - currDelay;
+            // Clamp inside trip span for stability
+            if (scheduleSec < firstPlanned) scheduleSec = firstPlanned;
+            if (scheduleSec > lastPlanned) scheduleSec = lastPlanned;
+            const p = (scheduleSec - firstPlanned) / (lastPlanned - firstPlanned);
             return Math.min(1, Math.max(0, p));
         };
-    }, [stopsToRender, selectedIndex, realtimeBySequence]);
+    }, [firstPlanned, lastPlanned, computeCurrentDelaySecs]);
 
-    // Determine the last passed stop index to visually grey out past stops
+    // Determine the last passed stop index to grey out past stops (based on same effective schedule time)
     const timelinePositions = useMemo(() => {
-        const absTimes: Array<number | null> = [];
-        for (let i = 0; i < stopsToRender.length; i++) {
-            const stop = stopsToRender[i];
-            const times = stop.stop_times || [];
-            const st = times[selectedIndex] || times.find(t => t?.arrival_time || t?.departure_time) || times[0];
-            if (!st) { absTimes.push(null); continue; }
-            const rt = realtimeBySequence.get(st.stop_sequence ?? -999);
-            const tSecRt = (rt?.departureTimeSecs ?? rt?.arrivalTimeSecs) ?? null;
-            const tSecPlanned = parseGtfsTime(st.departure_time || st.arrival_time || undefined);
-            absTimes.push(tSecRt != null ? tSecRt : tSecPlanned);
-        }
-        const first = absTimes.find(t => t != null) ?? null;
-        const last = [...absTimes].reverse().find(t => t != null) ?? null;
         const now = new Date();
         const nowSec = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds() + now.getMilliseconds() / 1000;
-        let effective = nowSec;
-        if (first != null && last != null) {
+        let effectiveNow = nowSec;
+        if (firstPlanned != null && lastPlanned != null) {
             for (let k = -1; k <= 1; k++) {
                 const shifted = nowSec + k * 86400;
-                if (shifted >= first && shifted <= last) { effective = shifted; break; }
+                if (shifted >= firstPlanned && shifted <= lastPlanned) { effectiveNow = shifted; break; }
             }
         }
+        const currDelay = computeCurrentDelaySecs();
+        let scheduleSec = effectiveNow;
+        if (currDelay != null) scheduleSec = effectiveNow - currDelay;
+        if (firstPlanned != null && scheduleSec < firstPlanned) scheduleSec = firstPlanned;
+        if (lastPlanned != null && scheduleSec > lastPlanned) scheduleSec = lastPlanned;
         let prevIdx = -1;
-        for (let i = 0; i < absTimes.length; i++) {
-            const t = absTimes[i];
-            if (t != null && t <= effective) prevIdx = i; else if (t != null && t > effective) break;
+        for (let i = 0; i < plannedTimesSec.length; i++) {
+            const t = plannedTimesSec[i];
+            if (t != null && t <= scheduleSec) prevIdx = i; else if (t != null && t > scheduleSec) break;
         }
         return { prevIdx };
-    }, [stopsToRender, selectedIndex, realtimeBySequence]);
+    }, [plannedTimesSec, firstPlanned, lastPlanned, computeCurrentDelaySecs]);
 
     useEffect(() => {
         const tick = () => {
@@ -237,9 +248,6 @@ const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose, selecte
             if (timerRef.current != null) window.clearTimeout(timerRef.current);
         };
     }, [computeProgress]);
-
-    // After hooks, if route is not available, render nothing
-    if (!route) return null;
 
     // Auto-scroll once to center the moving dot when panel opens or trip selection changes
     useEffect(() => {
@@ -270,8 +278,10 @@ const RouteInfoPanel: React.FC<RouteInfoPanelProps> = ({ route, onClose, selecte
             try {
                 const L = await import('leaflet');
                 if (cancelled) return;
-                L.DomEvent.disableScrollPropagation(el);
-                L.DomEvent.disableClickPropagation(el);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (L as any).DomEvent?.disableScrollPropagation?.(el);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (L as any).DomEvent?.disableClickPropagation?.(el);
             } catch {}
         })();
         return () => { cancelled = true; };
