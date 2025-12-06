@@ -32,6 +32,8 @@ SwissTransitMap is an interactive web app that visualizes the Swiss public trans
 - Responsive UI with smooth map interactions
 
 ---
+## Showcase video
+gif to come when i record it for the final version
 
 ## Tech Stack
 
