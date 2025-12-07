@@ -33,8 +33,7 @@ SwissTransitMap is an interactive web app that visualizes the Swiss public trans
 
 ---
 ## Showcase video
-gif to come when i record it for the final version
-
+[![Watch demo](./frontend/public/showcase.gif)]
 ## Tech Stack
 
 - Frontend: Next.js 15, React 19, React‑Leaflet, MUI, TypeScript
