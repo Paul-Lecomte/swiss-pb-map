@@ -115,7 +115,6 @@ swiss-pb-map/
 - Node.js 18+ and npm
 - MongoDB 6+ running locally (or a connection string to a remote instance)
 - GTFS feed for Switzerland (official source)
-- Optional: PostGIS (if you plan to use the experimental Postgres path)
 
 ---
 
