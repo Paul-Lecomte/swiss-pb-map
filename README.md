@@ -36,7 +36,7 @@ SwissTransitMap is an interactive web app that visualizes the Swiss public trans
 [![Watch demo](./frontend/public/showcase.gif)]
 ## Tech Stack
 
-- Frontend: Next.js 15, React 19, React‑Leaflet, MUI, TypeScript
+- Frontend: Next.js 16, React 19, React‑Leaflet, MUI, TypeScript
 - Backend: Node.js, Express.js, Docker
 - Database: MongoDB (primary store for GTFS and processed data)
 - Data sources: Swiss GTFS, optional: OpenStreetMap/OpenMapTiles for basemaps
