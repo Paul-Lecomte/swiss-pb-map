@@ -68,4 +68,34 @@ function computeProgress(predictedEpochTimes, nowEpoch) {
     return { prevStopIdx: predictedEpochTimes.length - 2, nextStopIdx: predictedEpochTimes.length - 1, fraction: 1 };
 }
 
-module.exports = { mapStopsToGeometry, interpolateBetweenCoords, computeProgress, cumulativeDistances, lerp };
+// Tronque une polyline (array de [lon,lat]) à une bbox [minLng,minLat,maxLng,maxLat]
+// Ajoute un padding optionnel pour éviter des coupures trop brutales aux bords
+function clipPolylineToBBox(coords, bbox, pad = 0) {
+    if (!Array.isArray(coords) || coords.length === 0 || !Array.isArray(bbox) || bbox.length !== 4) return coords || [];
+    const [minLng, minLat, maxLng, maxLat] = bbox;
+    const minX = minLng - pad, minY = minLat - pad, maxX = maxLng + pad, maxY = maxLat + pad;
+    const out = [];
+    let prevInside = null;
+    for (let i = 0; i < coords.length; i++) {
+        const p = coords[i];
+        const inside = p[0] >= minX && p[0] <= maxX && p[1] >= minY && p[1] <= maxY;
+        if (inside) {
+            out.push(p);
+        } else if (prevInside && out.length) {
+            // point sortant: insère un point à la frontière approximative pour conserver continuité
+            const last = out[out.length - 1];
+            const t = 0.5; // simple mid interpolation (evite complex line-bbox intersection)
+            out.push(lerp(last, p, t));
+        }
+        prevInside = inside;
+    }
+    // Si rien à l'intérieur, retourne éventuellement un court segment autour du centre bbox
+    if (!out.length) {
+        // heuristique: prend les points proches (dans 2*pad) si dispo
+        const near = coords.filter(c => c[0] >= minX - pad && c[0] <= maxX + pad && c[1] >= minY - pad && c[1] <= maxY + pad);
+        return near.length ? near : [];
+    }
+    return out;
+}
+
+module.exports = { mapStopsToGeometry, interpolateBetweenCoords, computeProgress, cumulativeDistances, lerp, clipPolylineToBBox };

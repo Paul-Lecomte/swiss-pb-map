@@ -3,7 +3,7 @@ const { DateTime } = require('luxon');
 const { getParsedTripUpdates, gtfsHhmmssToSeconds, filterTripUpdatesByIds } = require('../utils/gtfsRealTime');
 const ProcessedRoute = require('../model/processedRoutesModel');
 const ProcessedStopTimes = require('../model/processedStopTimesModel');
-const { mapStopsToGeometry, interpolateBetweenCoords, computeProgress } = require('../utils/interpolation');
+const { mapStopsToGeometry, interpolateBetweenCoords, computeProgress, clipPolylineToBBox } = require('../utils/interpolation');
 
 // Match TripUpdate to static trip document
 async function findStaticTripForUpdate(tu) {
@@ -157,22 +157,29 @@ const getInterpolatedRealtime = asyncHandler(async (req, res) => {
         }
         if (!vehicles.length) continue;
         const avgDelay = vehicles.reduce((a,v)=>a+v.delaySeconds,0)/vehicles.length;
+        // Clip geometry to bbox with small padding to keep continuity across edges
+        const clippedCoords = clipPolylineToBBox(route.geometry.coordinates, [minLng, minLat, maxLng, maxLat], 0.0005);
+        const geometry = { type: route.geometry.type, coordinates: roundCoords(clippedCoords) };
+        const baseProps = {
+            route_id: route.route_id,
+            route_short_name: route.route_short_name,
+            route_type: route.route_type,
+            route_color: route.route_color,
+            route_text_color: route.route_text_color,
+            delayMinutes: avgDelay / 60,
+            vehicles,
+            isRealtime,
+            fetchedAt
+        };
+        const props = compact ? baseProps : {
+            ...baseProps,
+            route_long_name: route.route_long_name,
+            route_desc: route.route_desc,
+        };
         features.push({
             type: 'Feature',
-            geometry: route.geometry,
-            properties: {
-                route_id: route.route_id,
-                route_short_name: route.route_short_name,
-                route_long_name: route.route_long_name,
-                route_type: route.route_type,
-                route_desc: route.route_desc,
-                route_color: route.route_color,
-                route_text_color: route.route_text_color,
-                delayMinutes: avgDelay / 60,
-                vehicles,
-                isRealtime,
-                fetchedAt
-            }
+            geometry,
+            properties: props
         });
     }
 

@@ -202,6 +202,21 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
             try { streamAbortRef.current.abort(); } catch {}
             isStreamingRef.current = false;
         }
+        // Ne lance pas si le changement de bbox est trop faible (<5% de surface ou <1% par dimension)
+        const prev = prevBboxRef.current;
+        if (prev) {
+            const [pminLng,pminLat,pmaxLng,pmaxLat] = prev;
+            const [minLng,minLat,maxLng,maxLat] = bbox;
+            const pWidth = Math.max(1e-9, pmaxLng - pminLng);
+            const pHeight = Math.max(1e-9, pmaxLat - pminLat);
+            const dW = Math.abs((maxLng - minLng) - pWidth) / pWidth;
+            const dH = Math.abs((maxLat - minLat) - pHeight) / pHeight;
+            const dx = Math.abs(((minLng + maxLng)/2) - ((pminLng + pmaxLng)/2)) / pWidth;
+            const dy = Math.abs(((minLat + maxLat)/2) - ((pminLat + pmaxLat)/2)) / pHeight;
+            const zoomChanged = Math.abs(zoom - (mapRef.current?.getZoom?.() ?? zoom)) >= 1; // seuil 1 niveau
+            const significant = (dx > 0.01 || dy > 0.01) || (dW > 0.05 || dH > 0.05) || zoomChanged;
+            if (!significant) return; // ignore petits déplacements
+        }
         pruneCacheForNewBbox(bbox);
         isStreamingRef.current = true;
         try {
@@ -410,7 +425,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
         // When the map is moved/zoomed we want to wait until the camera has
         // stopped moving for 3 seconds before calling the routes API. This
         // avoids heavy streaming calls while the user is actively panning/zooming.
-        const STOP_DELAY_MS = 4000;
+        const STOP_DELAY_MS = 400;
         const moveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
         const triggerLoad = (map: any) => {

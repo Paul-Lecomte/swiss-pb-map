@@ -2,6 +2,7 @@ const asyncHandler = require('express-async-handler');
 const { DateTime } = require('luxon');
 const ProcessedRoute = require('../model/processedRoutesModel');
 const ProcessedStopTimes = require('../model/processedStopTimesModel');
+const { clipPolylineToBBox } = require('../utils/interpolation');
 
 // ----------------- Helpers -----------------
 const getCurrentWeekday = () => {
@@ -137,7 +138,10 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
 
         return {
             type: 'Feature',
-            geometry: includeStaticForThis ? route.geometry : null,
+            geometry: includeStaticForThis ? {
+                type: route.geometry.type,
+                coordinates: clipPolylineToBBox(route.geometry.coordinates, [minLng, minLat, maxLng, maxLat], 0.0005)
+            } : null,
             properties: {
                 route_id: route.route_id,
                 static_included: includeStaticForThis,
