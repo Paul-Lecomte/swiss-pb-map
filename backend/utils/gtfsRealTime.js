@@ -7,22 +7,45 @@ const TOKEN = process.env.REALTIME_API_TOKEN;
 
 // Interval minimal 15s (4/min), TTL configurable via REALTIME_CACHE_MS
 const MIN_INTERVAL_MS = 15_000;
-const RAW_CACHE_DURATION_MS = Number(process.env.REALTIME_CACHE_MS || 30_000);
+// Force TTL to 15s unless explicitly overridden to keep cache fresh relative to poller
+const RAW_CACHE_DURATION_MS = Number(process.env.REALTIME_CACHE_MS || 15_000);
 const EFFECTIVE_CACHE_MS = Math.max(MIN_INTERVAL_MS, RAW_CACHE_DURATION_MS);
 
 // Historique des fetchs (fenêtre glissante 60s)
 let fetchTimestamps = [];
 
-// Cache pour le feed
+// Cache pour le feed brut et états
 let cachedEntities = [];
 let lastFetchTime = 0;
 let lastFetchedAtISO = null;
 let pendingPromise = null;
 let customFetcher = null; // injectable pour tests
 
+// Cache normalisé + index pour filtrage ultra rapide
+let cachedTripUpdatesNormalized = [];
+let indexByTripId = new Map();
+let indexByOriginalTripId = new Map();
+
+// Poller automatique
+let pollerTimer = null;
+
 function isCacheFresh() {
     const now = Date.now();
     return cachedEntities.length > 0 && (now - lastFetchTime) < EFFECTIVE_CACHE_MS;
+}
+
+function updateNormalizedCachesFromEntities() {
+    // Recalcule le tableau normalisé et les index à partir des entities brutes
+    const tripUpdates = parseTripUpdates(cachedEntities).map(normalizeTripUpdate);
+    cachedTripUpdatesNormalized = tripUpdates;
+    indexByTripId = new Map();
+    indexByOriginalTripId = new Map();
+    for (const tu of tripUpdates) {
+        const tid = tu?.trip?.tripId || null;
+        const oid = tu?.trip?.originalTripId || null;
+        if (tid) indexByTripId.set(tid, tu);
+        if (oid) indexByOriginalTripId.set(oid, tu);
+    }
 }
 
 async function doFetch() {
@@ -32,6 +55,7 @@ async function doFetch() {
             cachedEntities = r.entities;
             lastFetchTime = Date.now();
             lastFetchedAtISO = r.fetchedAt || new Date(lastFetchTime).toISOString();
+            updateNormalizedCachesFromEntities();
         }
         return { entities: cachedEntities, isRealtime: !!r?.isRealtime, fetchedAt: lastFetchedAtISO };
     }
@@ -52,10 +76,14 @@ async function doFetch() {
             cachedEntities = feed.entity || [];
             lastFetchTime = Date.now();
             lastFetchedAtISO = new Date(lastFetchTime).toISOString();
+            updateNormalizedCachesFromEntities();
+            console.log(`[Realtime] Fetched ${cachedEntities.length} entities at ${lastFetchedAtISO}`);
             return { entities: cachedEntities, isRealtime: true, fetchedAt: lastFetchedAtISO };
         }
+        console.warn(`[Realtime] Fetch returned status ${response.status}, using cache (${cachedEntities.length} entities)`);
         return { entities: cachedEntities, isRealtime: false, fetchedAt: lastFetchedAtISO };
     } catch (err) {
+        console.error(`[Realtime] Fetch error: ${err?.message || err}. Using cache (${cachedEntities.length} entities)`);
         return { entities: cachedEntities, isRealtime: false, fetchedAt: lastFetchedAtISO };
     }
 }
@@ -172,6 +200,9 @@ function resetRealtimeCache() {
     lastFetchedAtISO = null;
     pendingPromise = null;
     fetchTimestamps = [];
+    cachedTripUpdatesNormalized = [];
+    indexByTripId = new Map();
+    indexByOriginalTripId = new Map();
 }
 
 function filterTripUpdatesByIds(tripUpdates, ids) {
@@ -184,4 +215,51 @@ function filterTripUpdatesByIds(tripUpdates, ids) {
     });
 }
 
-module.exports = { fetchGTFSFeed, parseTripUpdates, parseVehiclePositions, getParsedTripUpdates, gtfsHhmmssToSeconds, midnightEpochForDate, normalizeTripUpdate, setCustomFetcher, clearCustomFetcher, getRealtimeCacheStats, resetRealtimeCache, filterTripUpdatesByIds };
+// ---- Nouveaux helpers pour le mode auto-refresh et le filtrage rapide ----
+function getCachedTripUpdates() {
+    const now = Date.now();
+    const cacheAgeMs = lastFetchTime ? (now - lastFetchTime) : Infinity;
+    return {
+        isRealtime: cacheAgeMs < EFFECTIVE_CACHE_MS,
+        fetchedAt: lastFetchedAtISO,
+        isCached: true,
+        cacheAgeMs,
+        isStale: cacheAgeMs >= EFFECTIVE_CACHE_MS,
+        tripUpdates: cachedTripUpdatesNormalized,
+        warm: cachedTripUpdatesNormalized.length > 0
+    };
+}
+
+function filterTripUpdatesByIdsCached(ids) {
+    if (!Array.isArray(ids) || ids.length === 0) return [];
+    const out = [];
+    const seen = new Set();
+    for (const id of ids) {
+        if (!id) continue;
+        const a = indexByTripId.get(id) || null;
+        const b = indexByOriginalTripId.get(id) || null;
+        if (a && !seen.has(a)) { out.push(a); seen.add(a); }
+        if (b && !seen.has(b)) { out.push(b); seen.add(b); }
+    }
+    return out;
+}
+
+async function refreshRealtimeNow() {
+    // Force un fetch immédiat (respecte encore les limites via fetchGTFSFeed)
+    return await fetchGTFSFeed();
+}
+
+function startRealtimeAutoRefresh(intervalMs) {
+    const every = 15_000; // force 15s as requested
+    if (pollerTimer) clearInterval(pollerTimer);
+    pollerTimer = setInterval(() => {
+        fetchGTFSFeed().catch(() => {});
+    }, every);
+    return every;
+}
+function stopRealtimeAutoRefresh() {
+    if (pollerTimer) clearInterval(pollerTimer);
+    pollerTimer = null;
+}
+
+module.exports = { fetchGTFSFeed, parseTripUpdates, parseVehiclePositions, getParsedTripUpdates, gtfsHhmmssToSeconds, midnightEpochForDate, normalizeTripUpdate, setCustomFetcher, clearCustomFetcher, getRealtimeCacheStats, resetRealtimeCache, filterTripUpdatesByIds, getCachedTripUpdates, filterTripUpdatesByIdsCached, refreshRealtimeNow, startRealtimeAutoRefresh, stopRealtimeAutoRefresh };
