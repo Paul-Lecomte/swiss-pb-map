@@ -1,6 +1,6 @@
 const asyncHandler = require('express-async-handler');
 const { DateTime } = require('luxon');
-const { getParsedTripUpdates, gtfsHhmmssToSeconds, filterTripUpdatesByIds } = require('../utils/gtfsRealTime');
+const { getParsedTripUpdates, getCachedTripUpdates, filterTripUpdatesByIdsCached, startRealtimeAutoRefresh, getRealtimeCacheStats } = require('../utils/gtfsRealTime');
 const ProcessedRoute = require('../model/processedRoutesModel');
 const ProcessedStopTimes = require('../model/processedStopTimesModel');
 const { mapStopsToGeometry, interpolateBetweenCoords, computeProgress, clipPolylineToBBox } = require('../utils/interpolation');
@@ -48,10 +48,26 @@ function hhmmssToEpochForDate(hhmmss, dateStr){
     return Math.floor(date.set({ hour: hh||0, minute: mm||0, second: ss||0 }).toSeconds());
 }
 
-// Endpoint: trip updates raw
+// Kick-off background auto-refresh (every 15s)
+try {
+    const everyMs = startRealtimeAutoRefresh(15_000);
+    console.log(`[Realtime] Auto-refresh enabled, interval=${everyMs}ms`);
+} catch (e) {
+    console.warn('[Realtime] Failed to start auto-refresh', e?.message || e);
+}
+
+// Endpoint: trip updates raw — serve cache without forcing ad-hoc refresh
 const getTripUpdates = asyncHandler(async (req, res) => {
-    const { isRealtime, fetchedAt, tripUpdates } = await getParsedTripUpdates();
-    res.json({ isRealtime, fetchedAt, tripUpdatesCount: tripUpdates.length, tripUpdates });
+    const cached = getCachedTripUpdates();
+    res.json({
+        isRealtime: cached.isRealtime,
+        fetchedAt: cached.fetchedAt,
+        isCached: true,
+        cacheAgeMs: cached.cacheAgeMs,
+        isStale: cached.isStale,
+        tripUpdatesCount: cached.tripUpdates.length,
+        tripUpdates: cached.tripUpdates
+    });
 });
 
 // Helper build predicted per-stop epoch seconds combining static and update
@@ -186,7 +202,7 @@ const getInterpolatedRealtime = asyncHandler(async (req, res) => {
     res.json({ type: 'FeatureCollection', features, meta: { isRealtime, fetchedAt, routeCount: routes.length, featureCount: features.length } });
 });
 
-// Endpoint: trip updates by tripIds
+// Endpoint: trip updates by tripIds — filter from cache
 const getTripUpdatesByTripIds = asyncHandler(async (req, res) => {
     const body = req.method === 'GET' ? req.query : req.body;
     let tripIds = body.tripIds || body.tripids || body.ids;
@@ -196,9 +212,42 @@ const getTripUpdatesByTripIds = asyncHandler(async (req, res) => {
     if (!Array.isArray(tripIds) || tripIds.length === 0) {
         return res.status(400).json({ error: 'tripIds required (array)' });
     }
-    const { isRealtime, fetchedAt, tripUpdates, isCached, cacheAgeMs, isStale, rateLimited, error } = await getParsedTripUpdates();
-    const filtered = filterTripUpdatesByIds(tripUpdates, tripIds);
-    res.json({ isRealtime, isCached, isStale, cacheAgeMs, rateLimited, error, fetchedAt, tripUpdatesCount: filtered.length, tripUpdates: filtered });
+    const cached = getCachedTripUpdates();
+    const filtered = filterTripUpdatesByIdsCached(tripIds);
+    res.json({
+        isRealtime: cached.isRealtime,
+        isCached: true,
+        isStale: cached.isStale,
+        cacheAgeMs: cached.cacheAgeMs,
+        fetchedAt: cached.fetchedAt,
+        tripUpdatesCount: filtered.length,
+        tripUpdates: filtered
+    });
 });
 
-module.exports = { getTripUpdates, getInterpolatedRealtime, getTripUpdatesByTripIds };
+// Endpoint: cache stats — simple diagnostics
+const getRealtimeCacheStatsEndpoint = asyncHandler(async (req, res) => {
+    const stats = getRealtimeCacheStats();
+    const cached = getCachedTripUpdates();
+    const sampleCount = Math.min(20, (cached.tripUpdates || []).length);
+    const sampleIds = (cached.tripUpdates || [])
+        .slice(0, sampleCount)
+        .map(tu => ({ tripId: tu?.trip?.tripId || null, originalTripId: tu?.trip?.originalTripId || null }))
+        .filter(x => x.tripId || x.originalTripId);
+    const includeFull = String(req.query.full || req.query.all || '0');
+    const shouldIncludeFull = includeFull === '1' || includeFull.toLowerCase() === 'true';
+    res.json({
+        stats,
+        cache: {
+            isRealtime: cached.isRealtime,
+            fetchedAt: cached.fetchedAt,
+            isCached: true,
+            cacheAgeMs: cached.cacheAgeMs,
+            isStale: cached.isStale,
+            tripUpdatesCount: cached.tripUpdates.length,
+            tripUpdates: cached.tripUpdates
+        }
+    });
+});
+
+module.exports = { getTripUpdates, getInterpolatedRealtime, getTripUpdatesByTripIds, getRealtimeCacheStatsEndpoint };
