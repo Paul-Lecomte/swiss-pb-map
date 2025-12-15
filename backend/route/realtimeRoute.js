@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getTripUpdates, getInterpolatedRealtime, getTripUpdatesByTripIds } = require('../controller/realtimeController');
+const { getTripUpdates, getInterpolatedRealtime, getTripUpdatesByTripIds, getRealtimeCacheStatsEndpoint } = require('../controller/realtimeController');
 
 // @desc     Get parsed GTFS-RT TripUpdates
 // @route    GET /api/realtime/trip-updates
@@ -12,14 +12,20 @@ router.get('/trip-updates', getTripUpdates);
 // @access   public
 router.get('/interpolated', getInterpolatedRealtime);
 
-// @desc     Get parsed GTFS-RT TripUpdates by trip IDs
+// Only POST for large sets via JSON body
+// @desc     Get parsed GTFS-RT TripUpdates by trip IDs (cache-based)
 // @route    POST /api/realtime/trip-updates/by-trip
 // @access   public
 router.post('/trip-updates/by-trip', getTripUpdatesByTripIds);
 
-// @desc     Get parsed GTFS-RT TripUpdates by trip IDs
-// @route    GET /api/realtime/trip-updates/by-trip
+// @desc     Cache stats for realtime
+// @route    GET /api/realtime/cache-stats
 // @access   public
-router.get('/trip-updates/by-trip', getTripUpdatesByTripIds);
+router.get('/cache-stats', getRealtimeCacheStatsEndpoint);
+
+// @desc     Cache stats alias under trip-updates path
+// @route    GET /api/realtime/trip-updates/cache-stats
+// @access   public
+router.get('/trip-updates/cache-stats', getRealtimeCacheStatsEndpoint);
 
 module.exports = router;
