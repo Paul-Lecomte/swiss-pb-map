@@ -130,7 +130,7 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
         const stopOrder = route.stops || [];
         const trip_schedules = activeTrips.map(trip => {
             const pairs = buildTimesForStopOrder(stopOrder, trip);
-            return { trip_id: trip.trip_id, direction_id: trip.direction_id, times: pairs };
+            return { trip_id: trip.trip_id, original_trip_id: trip.original_trip_id, direction_id: trip.direction_id, times: pairs };
         });
 
         // Clean up temporary property
