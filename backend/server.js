@@ -9,6 +9,9 @@ const connectDB = require('./config/dbConnection');
 const cookieParser = require('cookie-parser');
 const http = require('http');
 const morgan = require('morgan');
+const { stopRealtimeAutoRefresh, resetRealtimeCache } = require('./utils/gtfsRealTime');
+const helmet = require('helmet');
+const compression = require('compression');
 
 const PORT = process.env.PORT || 3000;
 
@@ -16,11 +19,32 @@ const PORT = process.env.PORT || 3000;
 connectDB();
 
 // Server config
+app.use(helmet());
+app.use(morgan('dev'));
 app.use(cors(corsOptions));
 app.use(express.urlencoded({ extended: false }));
-app.use(express.json());
+app.use(express.json({ limit: '4mb' }));
 app.use(cookieParser());
-app.use(morgan('dev'));
+app.use(
+  compression({
+    threshold: 1024,
+    filter: (req, res) => {
+      if (req.headers['x-no-compression']) return false;
+      return compression.filter(req, res);
+    },
+  })
+);
+// Parse bbox from query to req.bbox for downstream controllers
+app.use((req, res, next) => {
+  const bboxParam = req.query && req.query.bbox;
+  if (typeof bboxParam === 'string') {
+    const parts = bboxParam.split(',').map(Number);
+    if (parts.length === 4 && parts.every(Number.isFinite) && parts[0] < parts[2] && parts[1] < parts[3]) {
+      req.bbox = { minLon: parts[0], minLat: parts[1], maxLon: parts[2], maxLat: parts[3] };
+    }
+  }
+  next();
+});
 
 // Routes
 app.use('/api/gtfs', require('./route/tripRoute'));
@@ -171,4 +195,18 @@ mongoose.connection.once('open', () => {
 // Handle MongoDB connection errors
 mongoose.connection.on('error', (err) => {
     console.log(`MongoDB connection error: ${err}`);
+});
+
+// Handle process shutdown to clear realtime cache
+function gracefulShutdown(signal) {
+  console.log(`[Server] Received ${signal}. Cleaning realtime cache and shutting down...`);
+  try { stopRealtimeAutoRefresh(); } catch {}
+  try { resetRealtimeCache(); } catch {}
+  process.exit(0);
+}
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('beforeExit', () => {
+  try { stopRealtimeAutoRefresh(); } catch {}
+  try { resetRealtimeCache(); } catch {}
 });
