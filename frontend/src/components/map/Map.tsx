@@ -677,18 +677,18 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
 
     // Met à jour la liste des tripIds visibles à chaque changement de routes visibles (pas d'appel réseau ici)
     useEffect(() => {
-        const tripIds = new Set<string>();
+        const idsSet = new Set<string>();
         const currentVisible = (visibleRoutes as any[]) || [];
         for (const route of currentVisible) {
-            const schedules = route?.properties?.trip_schedules as Array<{ trip_id: string }> | undefined;
+            const schedules = route?.properties?.trip_schedules as Array<{ trip_id: string; original_trip_id?: string }> | undefined;
             if (Array.isArray(schedules)) {
                 for (const sch of schedules) {
-                    if (sch?.trip_id) tripIds.add(sch.trip_id);
+                    if (sch?.trip_id) idsSet.add(sch.trip_id);
+                    if (sch?.original_trip_id) idsSet.add(sch.original_trip_id);
                 }
             }
         }
-        const ids = Array.from(tripIds);
-        visibleTripIdsRef.current = ids;
+        visibleTripIdsRef.current = Array.from(idsSet);
     }, [visibleRoutes]);
 
     // Polling 15s stable (indépendant des changements de routes)
