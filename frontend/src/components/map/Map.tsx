@@ -425,7 +425,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
         // When the map is moved/zoomed we want to wait until the camera has
         // stopped moving for 3 seconds before calling the routes API. This
         // avoids heavy streaming calls while the user is actively panning/zooming.
-        const STOP_DELAY_MS = 400;
+        const STOP_DELAY_MS = 2000;
         const moveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
         const triggerLoad = (map: any) => {
