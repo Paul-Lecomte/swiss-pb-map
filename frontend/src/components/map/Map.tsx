@@ -16,7 +16,7 @@ import RouteInfoPanel from "@/components/routeinfopanel/RouteInfoPanel";
 import Vehicle from "@/components/vehicle/Vehicle";
 import { LayerState } from "../layer_option/LayerOption";
 import StreamProgress from "@/components/progress/StreamProgress";
-
+import { getRouteGeometry, getRouteGeometryByTrip } from "../../services/RouteApi";
 
 // Layer visibility state type
 type LayerKeys = "railway" | "stations" | "tram" | "bus" | "trolleybus" | "ferry" | "backgroundPois";
@@ -42,6 +42,8 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
         setHighlightedRouteId(route.properties?.route_id || `${route.properties?.route_short_name}-${route.properties?.route_long_name}`);
         setSelectedTripIndex(null);
         setSelectedTripId(null);
+        const rid = route.properties?.route_id || `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
+        focusOnRouteGeometry(rid);
     };
 
     const handleVehicleClick = (route: any, vehicleIdx: number, tripId?: string) => {
@@ -49,7 +51,57 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
         setHighlightedRouteId(route.properties?.route_id || `${route.properties?.route_short_name}-${route.properties?.route_long_name}`);
         setSelectedTripIndex(vehicleIdx);
         setSelectedTripId(tripId ?? null);
+        const rid = route.properties?.route_id || `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
+        focusOnRouteGeometry(rid, tripId ?? undefined);
     };
+
+    async function focusOnRouteGeometry(routeId: string, tripId?: string) {
+        if (!routeId && !tripId) return;
+        const cacheKey = tripId ? `trip:${tripId}` : routeId;
+        const cached = routesCacheRef.current.get(cacheKey);
+        const isFull = (cached as any)?.full === true;
+        if (cached && cached.route?.geometry?.coordinates?.length && isFull) {
+            try { centerOnGeometry(cached.route.geometry); } catch {}
+            return;
+        }
+        try {
+            console.log('[Map] fetching full geometry', tripId ? { tripId } : { routeId });
+            const feat = tripId
+                ? await getRouteGeometryByTrip(tripId!, { simplify: 0, includeStops: true, maxTrips: 500 })
+                : await getRouteGeometry(routeId, { simplify: 0, includeStops: true, maxTrips: 500 });
+            if (!feat?.geometry?.coordinates?.length) return;
+            const entry = routesCacheRef.current.get(cacheKey) || { route: feat, bboxes: [], lastAccess: Date.now() };
+            entry.route = feat;
+            entry.lastAccess = Date.now();
+            (entry as any).full = true; // marque comme géométrie complète
+            if (!entry.bboxes) entry.bboxes = [];
+            routesCacheRef.current.set(cacheKey, entry);
+            // Mise à jour de selectedRoute si correspond
+            try {
+                const curSelId = selectedRoute?.properties?.route_id || (selectedRoute ? `${selectedRoute.properties?.route_short_name}-${selectedRoute.properties?.route_long_name}` : null);
+                if (curSelId === routeId) setSelectedRoute(feat);
+            } catch {}
+            setRoutes(Array.from(routesCacheRef.current.values()).map(c => c.route));
+            centerOnGeometry(feat.geometry);
+        } catch (e) {
+            console.error('[Map] getRouteGeometry failed', e);
+        }
+    }
+
+    function centerOnGeometry(geometry: any) {
+        if (!geometry || !Array.isArray(geometry.coordinates) || geometry.coordinates.length === 0) return;
+        const coords = geometry.coordinates.map((c: any) => [Number(c[1]), Number(c[0])]);
+        try {
+            if (mapRef.current) {
+                const L = (window as any).L;
+                const poly = L.polyline(coords);
+                try { mapRef.current.fitBounds(poly.getBounds(), { padding: [60, 60] }); }
+                catch (err) { mapRef.current.flyTo(coords[Math.floor(coords.length/2)], Math.min(mapRef.current.getMaxZoom?.() ?? 17, 15), { animate: true }); }
+            } else {
+                setPendingCenter({ lat: coords[Math.floor(coords.length/2)][0], lon: coords[Math.floor(coords.length/2)][1], zoom: 13 });
+            }
+        } catch (e) { console.error('[Map] centerOnGeometry failed', e); }
+    }
 
     const handleCloseRoutePanel = () => {
         setSelectedRoute(null);

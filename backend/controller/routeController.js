@@ -2,6 +2,8 @@ const asyncHandler = require('express-async-handler');
 const { DateTime } = require('luxon');
 const ProcessedRoute = require('../model/processedRoutesModel');
 const ProcessedStopTimes = require('../model/processedStopTimesModel');
+const Trip = require('../model/tripsModel');
+const Route = require('../model/routesModel');
 const { clipPolylineToBBox } = require('../utils/interpolation');
 
 // ----------------- Helpers -----------------
@@ -237,7 +239,89 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
     res.json({ type: "FeatureCollection", features });
 });
 
-module.exports = { getRoutesInBbox };
+// Retourne la géométrie complète d'une route + arrêts + trip_schedules
+const getRouteGeometry = asyncHandler(async (req, res) => {
+    const routeId = req.params.route_id || req.query.route_id;
+    if (!routeId) return res.status(400).json({ error: 'route_id missing' });
+
+    // Limite de sécurité sur le nombre de trips
+    const maxTrips = Math.max(1, Math.min(Number(req.query.max_trips ?? 500), 5000));
+
+    // Récupère la route
+    const route = await ProcessedRoute.findOne({ route_id: routeId }).lean();
+    if (!route) return res.status(404).json({ error: 'route not found' });
+
+    // Récupère les trips et stop_times associés à la route
+    const trips = await ProcessedStopTimes.find({ route_id: routeId }, {
+        trip_id: 1,
+        original_trip_id: 1,
+        direction_id: 1,
+        stop_times: 1,
+        route_start_time: 1,
+        route_stop_time: 1,
+        calendar: 1,
+        calendar_dates: 1,
+    }).lean();
+
+    const stopOrder = route.stops || [];
+    const trip_schedules = (trips || []).slice(0, maxTrips).map(trip => {
+        const times = buildTimesForStopOrder(stopOrder, trip);
+        return {
+            trip_id: trip.trip_id,
+            original_trip_id: trip.original_trip_id,
+            direction_id: trip.direction_id,
+            times,
+        };
+    });
+
+    const feature = {
+        type: 'Feature',
+        geometry: route.geometry || null,
+        properties: {
+            route_id: route.route_id,
+            route_short_name: route.route_short_name,
+            route_long_name: route.route_long_name,
+            route_type: route.route_type,
+            route_desc: route.route_desc,
+            route_color: route.route_color,
+            route_text_color: route.route_text_color,
+            bounds: route.bounds,
+            stops: (route.stops || []).map(s => ({
+                stop_id: s.stop_id,
+                stop_name: s.stop_name,
+                stop_lat: s.stop_lat,
+                stop_lon: s.stop_lon,
+                stop_sequence: s.stop_sequence,
+            })),
+            trip_schedules,
+            trip_count: trip_schedules.length,
+        }
+    };
+
+    return res.json(feature);
+});
+
+// Resolve full route geometry by trip_id (find route_id then delegate)
+async function getRouteGeometryByTrip(req, res) {
+    try {
+        const { trip_id } = req.params;
+        if (!trip_id) return res.status(400).json({ error: 'trip_id required' });
+        const trip = await Trip.findOne({ trip_id });
+        if (!trip) return res.status(404).json({ error: 'trip not found' });
+        req.params.route_id = trip.route_id;
+        // Delegate to existing handler
+        return getRouteGeometry(req, res);
+    } catch (e) {
+        console.error('[getRouteGeometryByTrip] failed', e);
+        return res.status(500).json({ error: 'server error' });
+    }
+}
+
+module.exports = {
+    getRoutesInBbox,
+    getRouteGeometry,
+    getRouteGeometryByTrip,
+};
 
 function buildTimesForStopOrder(stopOrder, trip) {
     const N = Array.isArray(stopOrder) ? stopOrder.length : 0;
