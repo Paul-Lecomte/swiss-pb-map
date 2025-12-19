@@ -281,6 +281,7 @@ Tip: Start the server and visit `http://localhost:4000/` for a small landing pag
 - [x] Advanced UI: real-time positions, disruptions
 - [ ] User accounts & favorites not working on it rn
 - [ ] Extend to other European networks
+- [ ] Mobile app version
 
 ---
 
