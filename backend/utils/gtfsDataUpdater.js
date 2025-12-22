@@ -634,16 +634,43 @@ async function buildStopMap(fileName) {
 // ProcessedStops (unchanged DB-based - uses DB collections)
 // -------------------------
 
+async function loadCollectionWithProgress(Model, name) {
+    const total = await Model.countDocuments({});
+    console.log(`[Load ${name}] total=${total}`);
+    const cursor = Model.find({}).cursor();
+    const items = [];
+    let seen = 0;
+    const step = Math.max(1, Math.floor(total / 20)); // ~5% steps
+    for (let doc = await cursor.next(); doc != null; doc = await cursor.next()) {
+        items.push(doc);
+        seen++;
+        if (seen % step === 0 || seen === total) {
+            const pct = total ? Math.round((seen / total) * 100) : 100;
+            console.log(`[Load ${name}] ${seen}/${total} (${pct}%)`);
+        }
+    }
+    console.log(`[Load ${name}] done: ${items.length} loaded.`);
+    return items;
+}
+
 async function populateProcessedStops() {
     console.log('Starting high-performance population of ProcessedStop...');
+    const startTs = Date.now();
     await ProcessedStop.deleteMany({});
     console.log('Cleared ProcessedStop collection.');
 
-    const [allTrips, allRoutes] = await Promise.all([
-        Trip.find({}),
-        Route.find({})
+    // Extra logs about base collections (sizes) to help diagnose issues
+    const [tripCount, routeCount, stopCount, stopTimeCount] = await Promise.all([
+        Trip.countDocuments({}),
+        Route.countDocuments({}),
+        Stop.countDocuments({}),
+        StopTime.countDocuments({}),
     ]);
-    console.log(`Loaded ${allTrips.length} trips and ${allRoutes.length} routes into memory.`);
+    console.log(`Base collections — trips: ${tripCount}, routes: ${routeCount}, stops: ${stopCount}, stop_times: ${stopTimeCount}`);
+
+    // Load with progress
+    const allTrips = await loadCollectionWithProgress(Trip, 'Trip');
+    const allRoutes = await loadCollectionWithProgress(Route, 'Route');
 
     const tripMap = new Map(allTrips.map(trip => [trip.trip_id, trip]));
     const routeMap = new Map(allRoutes.map(route => [route.route_id, route]));
@@ -654,23 +681,37 @@ async function populateProcessedStops() {
     let processedCount = 0;
     let batchNumber = 1;
 
+    const memUsage = () => {
+        const m = process.memoryUsage();
+        return `rss=${(m.rss/1024/1024).toFixed(1)}MB heapUsed=${(m.heapUsed/1024/1024).toFixed(1)}MB`;
+        };
+
     for (let stop = await stopCursor.next(); stop != null; stop = await stopCursor.next()) {
         stopsBatch.push(stop);
 
         if (stopsBatch.length === batchSize) {
+            const batchStart = Date.now();
+            console.log(`[Batch ${batchNumber}] Preparing ${stopsBatch.length} stops… (${memUsage()})`);
             await processStopBatch(stopsBatch, tripMap, routeMap, batchNumber);
+            const batchDur = Date.now() - batchStart;
             processedCount += stopsBatch.length;
+            console.log(`[Batch ${batchNumber}] Inserted ${stopsBatch.length} ProcessedStops in ${batchDur} ms. Total processed: ${processedCount}. (${memUsage()})`);
             stopsBatch = [];
             batchNumber++;
         }
     }
 
     if (stopsBatch.length > 0) {
+        const batchStart = Date.now();
+        console.log(`[Batch ${batchNumber}] Preparing ${stopsBatch.length} stops (final)… (${memUsage()})`);
         await processStopBatch(stopsBatch, tripMap, routeMap, batchNumber);
+        const batchDur = Date.now() - batchStart;
         processedCount += stopsBatch.length;
+        console.log(`[Batch ${batchNumber}] Inserted ${stopsBatch.length} ProcessedStops in ${batchDur} ms. Total processed: ${processedCount}. (${memUsage()})`);
     }
 
-    console.log(`Finished. Total ProcessedStop records inserted: ${processedCount}`);
+    const totalDur = Date.now() - startTs;
+    console.log(`Finished ProcessedStop population. Total records: ${processedCount}. Duration: ${totalDur} ms. (${memUsage()})`);
 }
 
 async function processStopBatch(stopsBatch, tripMap, routeMap, batchNumber) {
@@ -1002,14 +1043,10 @@ async function main() {
     }
 
     if (args.includes('--processedstops')) {
-        await ensureGTFSDataAvailable();
-
-        await parseCSV('stops.txt', Stop, 'Stop');
-        await parseCSV('stop_times.txt', StopTime, 'Stop Time');
-        await parseCSV('routes.txt', Route, 'Route');
-        await parseCSV('trips.txt', Trip, 'Trip');
-
+        // Fast path: only rebuild ProcessedStops from existing DB collections
+        console.log('Rebuilding ProcessedStops from existing DB collections (no base refresh)...');
         await populateProcessedStops();
+        console.log('✅ ProcessedStops rebuilt.');
     }
 
     if (args.includes('--processedroutes')) {
