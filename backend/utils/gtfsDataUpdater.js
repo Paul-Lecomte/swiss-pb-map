@@ -391,7 +391,22 @@ async function populateProcessedStopTimes() {
         ])
     );
 
-    console.log(`🧭 Built calendar map with ${calendarMap.size} entries`);
+    // NEW: load calendar_dates.txt for exceptions by service_id
+    console.log('Processing calendar_dates.txt (in-memory only)...');
+    const calendarDates = await parseCSV('calendar_dates.txt', null, 'Calendar Date', { saveToDB: false });
+    console.log(`✅ Loaded ${calendarDates.length} calendar date exceptions`);
+
+    const calendarDatesMap = new Map(); // service_id -> [{date, exception_type}]
+    for (const cd of calendarDates) {
+        const sid = cd.service_id?.trim();
+        if (!sid) continue;
+        const date = cd.date?.trim();
+        const exception_type = cd.exception_type !== undefined ? parseInt(cd.exception_type, 10) : undefined;
+        if (!date || !exception_type) continue;
+        if (!calendarDatesMap.has(sid)) calendarDatesMap.set(sid, []);
+        calendarDatesMap.get(sid).push({ date, exception_type });
+    }
+    console.log(`🧭 Built calendar_dates map with ${calendarDatesMap.size} services`);
 
     await ProcessedStopTimes.deleteMany({});
     console.log('🧹 Cleared ProcessedStopTimes collection.');
@@ -447,9 +462,9 @@ async function populateProcessedStopTimes() {
                             : null;
 
                         // Retrieve normalized calendar
-                        const calendar = doc.service_id
-                            ? calendarMap.get(doc.service_id.trim()) || null
-                            : null;
+                        const sid = doc.service_id ? doc.service_id.trim() : null;
+                        const calendar = sid ? (calendarMap.get(sid) || null) : null;
+                        const calendar_dates = sid ? (calendarDatesMap.get(sid) || []) : [];
 
                         if (!calendar) {
                             console.warn(`[WARN] No calendar found for service_id=${doc.service_id} (trip_id=${doc.trip_id})`);
@@ -460,7 +475,8 @@ async function populateProcessedStopTimes() {
                             stop_times,
                             route_start_time,
                             route_stop_time,
-                            calendar
+                            calendar,
+                            calendar_dates
                         };
                     });
 
@@ -1018,3 +1034,4 @@ main().catch(err => {
 
 
 });
+
