@@ -2,22 +2,22 @@
  * Commands to update GTFS collections:
  *
  * 1. Update all GTFS collections (agency, calendar, stops, etc.) + ProcessedStops:
- *    node backend/utils/gtfsDataUpdater.js
+ *    node utils/gtfsDataUpdater.js
  *
  * 2. Update only stops:
  *    node backend/utils/gtfsDataUpdater.js --stops
  *
  * 3. Update ProcessedStops (reload required collections and build ProcessedStops):
- *    node backend/utils/gtfsDataUpdater.js --processedstops
+ *    node utils/gtfsDataUpdater.js --processedstops
  *
  * 4. Update ProcessedRoute (optimized pipeline, does not touch base collections):
  *    node backend/utils/gtfsDataUpdater.js --processedroutes
  *
  * 5. Update only base GTFS collections (skip ProcessedStops and ProcessedRoute):
- *    node backend/utils/gtfsDataUpdater.js --base
+ *    node utils/gtfsDataUpdater.js --base
  *
  * 6. update the ProcessedStopTimes collection:
- *   node backend/utils/gtfsDataUpdater.js --processedstoptimes
+ *   node utils/gtfsDataUpdater.js --processedstoptimes
  *
  * Run these commands in the terminal at the project root.
  */
@@ -521,7 +521,7 @@ async function countStopTimesPerTrip(fileName) {
 }
 
 /**
- * Second pass: collect stop_times only for the requested tripIds.
+ * Second pass: collect stop_times only for the requested tripIdSet.
  * Returns a Map<trip_id, Array<stop_time_row>>.
  */
 async function collectStopTimesForTripIds(fileName, tripIdSet) {
@@ -924,10 +924,15 @@ async function updateGTFSData() {
             }
         }
 
+        // Build Processed collections
         await populateProcessedStops();
+        await populateProcessedStopTimes();
+        await populateProcessedRoutesFromFiles();
+
+        // Clean temporary data dir
         fs.rmSync(DATA_DIR, { recursive: true, force: true });
 
-        console.log('GTFS data update completed.');
+        console.log('GTFS data update completed (base + processed collections).');
     } finally {
         mongoose.connection.close();
         process.exit(0);
@@ -996,6 +1001,7 @@ async function main() {
         await populateProcessedRoutesFromFiles();
     }
 
+    // Default: full update (base + processed)
     if (args.length === 0) {
         await ensureGTFSDataAvailable();
         await updateGTFSData();
