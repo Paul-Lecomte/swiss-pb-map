@@ -42,7 +42,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
         setSelectedTripIndex(null);
         setSelectedTripId(null);
         const rid = route.properties?.route_id || `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
-        focusOnRouteGeometry(rid);
+        focusOnRouteGeometry(rid); // centre par défaut
     };
 
     const handleVehicleClick = (route: any, vehicleIdx: number, tripId?: string) => {
@@ -51,16 +51,16 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
         setSelectedTripIndex(vehicleIdx);
         setSelectedTripId(tripId ?? null);
         const rid = route.properties?.route_id || `${route.properties?.route_short_name}-${route.properties?.route_long_name}`;
-        focusOnRouteGeometry(rid, tripId ?? undefined);
+        focusOnRouteGeometry(rid, tripId ?? undefined, false); // ne pas recentrer pour éviter le dézoom
     };
 
-    async function focusOnRouteGeometry(routeId: string, tripId?: string) {
+    async function focusOnRouteGeometry(routeId: string, tripId?: string, shouldCenter: boolean = true) {
         if (!routeId && !tripId) return;
         const cacheKey = tripId ? `trip:${tripId}` : routeId;
         const cached = routesCacheRef.current.get(cacheKey);
         const isFull = (cached as any)?.full === true;
         if (cached && cached.route?.geometry?.coordinates?.length && isFull) {
-            try { centerOnGeometry(cached.route.geometry); } catch {}
+            if (shouldCenter) { try { centerOnGeometry(cached.route.geometry); } catch {} }
             return;
         }
         try {
@@ -75,13 +75,23 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
             (entry as any).full = true; // marque comme géométrie complète
             if (!entry.bboxes) entry.bboxes = [];
             routesCacheRef.current.set(cacheKey, entry);
+            // Si on a un tripId, synchronise aussi sous la clé route_id pour un affichage uniforme
+            const fetchedRouteId = feat?.properties?.route_id || routeId;
+            if (tripId && fetchedRouteId) {
+                const existing = routesCacheRef.current.get(fetchedRouteId) || { route: feat, bboxes: [], lastAccess: Date.now() };
+                existing.route = feat;
+                existing.lastAccess = Date.now();
+                (existing as any).full = true;
+                if (!existing.bboxes) existing.bboxes = [];
+                routesCacheRef.current.set(fetchedRouteId, existing);
+            }
             // Mise à jour de selectedRoute si correspond
             try {
                 const curSelId = selectedRoute?.properties?.route_id || (selectedRoute ? `${selectedRoute.properties?.route_short_name}-${selectedRoute.properties?.route_long_name}` : null);
-                if (curSelId === routeId) setSelectedRoute(feat);
+                if (curSelId === fetchedRouteId || curSelId === routeId) setSelectedRoute(feat);
             } catch {}
             setRoutes(Array.from(routesCacheRef.current.values()).map(c => c.route));
-            centerOnGeometry(feat.geometry);
+            if (shouldCenter) centerOnGeometry(feat.geometry);
         } catch (e) {
             console.error('[Map] getRouteGeometry failed', e);
         }
