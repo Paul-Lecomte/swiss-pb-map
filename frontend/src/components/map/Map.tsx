@@ -305,13 +305,13 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
             const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
             const worker = routeWorkerRef.current;
             return await new Promise<void>((resolve) => {
-                const onMessage = (ev: MessageEvent) => {
-                    const msg = ev.data;
+                const onMessage = (ev: MessageEvent<any>) => {
+                    const msg: any = ev.data as any;
                     if (!msg) return;
                     if (msg.type === 'meta') {
                         setStreamInfo(prev => ({ ...prev, total: msg.data.filteredRoutes ?? msg.data.totalRoutes }));
                     } else if (msg.type === 'features') {
-                        for (const feature of msg.features) {
+                        for (const feature of (msg.features as any[])) {
                             const id = feature.properties?.route_id || `${feature.properties?.route_short_name}-${feature.properties?.route_long_name}`;
                             if (!id) continue;
                             let intersects = false;
@@ -338,15 +338,15 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
                             if (!intersects) continue;
                             if (routesCacheRef.current.has(id)) {
                                 const entry = routesCacheRef.current.get(id)!;
-                                entry.route = feature.geometry ? feature : { ...feature, geometry: entry.route.geometry };
-                                if (!entry.bboxes.some(b => b.join("\,") === bboxKey)) entry.bboxes.push(bbox);
+                                entry.route = feature.geometry ? feature : { ...(feature as any), geometry: entry.route.geometry } as any;
+                                if (!entry.bboxes.some(b => b.join(",") === bboxKey)) entry.bboxes.push(bbox);
                                 entry.lastAccess = Date.now();
                             } else {
                                 routesCacheRef.current.set(id, { route: feature, bboxes: [bbox], lastAccess: Date.now() });
                             }
                         }
                         scheduleFlush();
-                        setStreamInfo(prev => ({ ...prev, received: prev.received + msg.features.length }));
+                        setStreamInfo(prev => ({ ...prev, received: prev.received + (Array.isArray(msg.features) ? msg.features.length : 0) }));
                         evictCacheIfNeeded(bbox);
                     } else if (msg.type === 'end') {
                         setStreamInfo(prev => ({ ...prev, loading: false, elapsedMs: msg.data.elapsedMs }));
@@ -386,7 +386,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
             await streamRoutesInBbox(
                 bbox,
                 zoom,
-                (feature) => {
+                (feature: any) => {
                     const id = feature.properties?.route_id || `${feature.properties?.route_short_name}-${feature.properties?.route_long_name}`;
                     if (!id) return;
                     returnedThisCall.add(id);
@@ -414,8 +414,8 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
                     if (!intersects) return;
                     if (routesCacheRef.current.has(id)) {
                         const entry = routesCacheRef.current.get(id)!;
-                        entry.route = feature.geometry ? feature : { ...feature, geometry: entry.route.geometry };
-                        if (!entry.bboxes.some(b => b.join("\,") === bboxKey)) entry.bboxes.push(bbox);
+                        entry.route = feature.geometry ? feature : { ...feature, geometry: entry.route.geometry } as any;
+                        if (!entry.bboxes.some(b => b.join(",") === bboxKey)) entry.bboxes.push(bbox);
                         entry.lastAccess = Date.now();
                     } else {
                         routesCacheRef.current.set(id, { route: feature, bboxes: [bbox], lastAccess: Date.now() });
@@ -432,8 +432,8 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
                     concurrency: 10,
                     onlyNew: true,
                     maxRoutes: maxRoutesToFetch,
-                    onMeta: (m) => setStreamInfo(prev => ({ ...prev, total: m.filteredRoutes ?? m.totalRoutes })),
-                    onEnd: (e) => setStreamInfo(prev => ({ ...prev, loading: false, elapsedMs: e.elapsedMs }))
+                    onMeta: (m: any) => setStreamInfo(prev => ({ ...prev, total: m.filteredRoutes ?? m.totalRoutes })),
+                    onEnd: (e: any) => setStreamInfo(prev => ({ ...prev, loading: false, elapsedMs: e.elapsedMs }))
                 }
             );
             const prevIds = lastBboxRoutesRef.current;
@@ -471,12 +471,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
     }
 
     function MapEvents() {
-        // When the map is moved/zoomed we want to wait until the camera has
-        // stopped moving for 3 seconds before calling the routes API. This
-        // avoids heavy streaming calls while the user is actively panning/zooming.
-        const STOP_DELAY_MS = 2000;
-        const moveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-
+        // Déclenche le fetch dès que l'interaction se termine (événement moveend)
         const triggerLoad = (map: any) => {
             const bounds = map.getBounds();
             const bbox = [
@@ -489,31 +484,16 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
             const maxZoom = map.getMaxZoom();
 
             setZoom(currentZoom);
-            // loadStops is allowed to run immediately for stops (lighter), but
-            // requestRoutes will only run when the camera stopped for STOP_DELAY_MS.
             loadStops(bbox, currentZoom, maxZoom);
             if (!routeLineOpenRef.current) requestRoutes(bbox, currentZoom);
         };
 
-        useMapEvents({
-            move: (e: any) => {
-                // Clear any pending timeout if user keeps moving
-                if (moveTimeout.current) clearTimeout(moveTimeout.current);
-                // Set a new timeout: only when the camera has been idle for STOP_DELAY_MS
-                moveTimeout.current = setTimeout(() => {
-                    triggerLoad(e.target);
-                    moveTimeout.current = null;
-                }, STOP_DELAY_MS);
-            },
+        const onMoveEnd = (e: any) => {
+            triggerLoad(e.target);
+        };
 
-            zoomend: (e: any) => {
-                // Clear previous timeout and schedule the same stop-detection delay
-                if (moveTimeout.current) clearTimeout(moveTimeout.current);
-                moveTimeout.current = setTimeout(() => {
-                    triggerLoad(e.target);
-                    moveTimeout.current = null;
-                }, STOP_DELAY_MS);
-            },
+        useMapEvents({
+            moveend: onMoveEnd as any,
         });
 
         return null;
@@ -710,8 +690,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
         if (mode === "trolleybus") return layersVisible.trolleybus;
         if (mode === "ferry") return layersVisible.ferry;
         return true;
-    }), [uniqueRoutes, highlightedRouteId, layersVisible]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }), [uniqueRoutes, highlightedRouteId, layersVisible, detectRouteMode]);
 
     const showAllRoutes = layersVisible.showRoutes;
     const showAllVehicles = layersVisible.showVehicles;
