@@ -5,17 +5,17 @@ import { MapContainer, TileLayer, useMapEvents, useMap } from "react-leaflet";
 import StopMarker from "@/components/stopmarker/StopMarker";
 import "leaflet/dist/leaflet.css";
 import ZoomControl from "../zoom/ZoomControl";
-import { fetchStopsInBbox } from "../../services/StopsApiCalls";
+import { fetchStopsInBbox } from "@/services/StopsApiCalls";
 import MapLayerSwitcher, { layers } from "../maplayerswitcher/MapLayerSwitcher";
-import { streamRoutesInBbox } from "../../services/RouteApiCalls";
-import { realtimeUpdatesByTripIds } from "../../services/RealtimeApiCalls";
+import { streamRoutesInBbox } from "@/services/RouteApiCalls";
+import { realtimeUpdatesByTripIds } from "@/services/RealtimeApiCalls";
 import RouteLine from "@/components//route_line/RouteLine";
 import Search from "@/components/search/Search";
 import RouteInfoPanel from "@/components/routeinfopanel/RouteInfoPanel";
 import Vehicle from "@/components/vehicle/Vehicle";
 import { LayerState } from "../layer_option/LayerOption";
 import StreamProgress from "@/components/progress/StreamProgress";
-import { getRouteGeometry, getRouteGeometryByTrip } from "../../services/RouteApi";
+import { getRouteGeometry, getRouteGeometryByTrip } from "@/services/RouteApi";
 
 // Layer visibility state type
 type LayerKeys = "railway" | "stations" | "tram" | "bus" | "trolleybus" | "ferry" | "backgroundPois";
