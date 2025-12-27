@@ -1,5 +1,4 @@
 const allowedOrigins = require('./allowedOrigins')
-const {all} = require("express/lib/application");
 
 //function for the cors API
 const corsOptions = {
@@ -7,7 +6,7 @@ const corsOptions = {
         if (allowedOrigins.indexOf(origin) !== -1 || !origin){
             callback(null, true)
         } else {
-            callback(new Error('Non autorisé par CORS'))
+            callback(new Error('Not allowed by CORS'))
         }
     },
     credentials: true,

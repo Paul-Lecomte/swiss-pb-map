@@ -1,6 +1,6 @@
-// Worker de streaming des routes
-// Reçoit: { cmd: 'stream', apiBase, bbox, zoom, knownIds, includeStatic, maxTrips, concurrency, onlyNew }
-// Envoie: { type: 'meta', data }, { type: 'features', features: [...] }, { type: 'end', data }, { type: 'error', message }
+// Route streaming worker
+// Receives: { cmd: 'stream', apiBase, bbox, zoom, knownIds, includeStatic, maxTrips, concurrency, onlyNew }
+// Sends: { type: 'meta', data }, { type: 'features', features: [...] }, { type: 'end', data }, { type: 'error', message }
 
 self.addEventListener('message', async (evt) => {
   const msg = evt.data;

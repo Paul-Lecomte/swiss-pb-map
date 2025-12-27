@@ -179,7 +179,7 @@ const findFastestPath = asyncHandler(async (req, res) => {
     const departure_date = req.query.departure_date;
 
     if (!departure_date) {
-        return res.status(400).json({ message: "Date de départ (departure_date) requise au format YYYY-MM-DD" });
+        return res.status(400).json({ message: "Departure date (departure_date) required in YYYY-MM-DD format" });
     }
 
     const dayMap = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
@@ -279,19 +279,19 @@ const findFastestPath = asyncHandler(async (req, res) => {
     const pathResult = await dijkstraGTFS(from_id, to_id, stoptimes, transfers, departure_time);
 
     if (!pathResult || pathResult.length === 0) {
-        return res.status(404).json({ message: "Aucun chemin trouvé" });
+        return res.status(404).json({ message: "No path found" });
     }
 
     if (pathResult.length > 100000) {
-        return res.status(413).json({ message: "Chemin trop long, potentiellement cyclique" });
+        return res.status(413).json({ message: "Path too long, potentially cyclic" });
     }
 
-    // Récupère les stops nécessaires
+    // Retrieve required stops
     const stopIds = [...new Set(pathResult.map(p => p.stop_id))];
     const stops = await Stop.find({ stop_id: { $in: stopIds } });
     const stopMap = new Map(stops.map(s => [s.stop_id, s]));
 
-    // Début du streaming JSON
+    // Start streaming JSON
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.write('{"path":[');
 
@@ -299,7 +299,7 @@ const findFastestPath = asyncHandler(async (req, res) => {
         const p = pathResult[i];
         const obj = {
             stop_id: p.stop_id,
-            stop_name: stopMap.get(p.stop_id)?.stop_name || "Inconnu",
+            stop_name: stopMap.get(p.stop_id)?.stop_name || "Unknown",
             arrival_time: new Date(p.arrival_time_at_stop * 1000).toISOString().substr(11, 8),
             departure_time: p.departure_time_from_stop
                 ? new Date(p.departure_time_from_stop * 1000).toISOString().substr(11, 8)

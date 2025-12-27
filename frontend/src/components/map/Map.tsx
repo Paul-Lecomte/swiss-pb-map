@@ -977,4 +977,3 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
 };
 
 export default MapView;
-

@@ -5,21 +5,21 @@ import os
 def validate_json_array(file_path):
     try:
         file_path = os.path.abspath(file_path)
-        print(f"🔍 Validation du fichier : {file_path}")
+        print(f"🔍 Validating file: {file_path}")
 
-        # Vérifie que le fichier existe
+        # Check that the file exists
         if not os.path.exists(file_path):
-            print("❌ Le fichier n'existe pas.")
+            print("❌ File does not exist.")
             return
 
         with open(file_path, 'rb') as f:
-            # Vérifie que le premier caractère est `[`
+            # Check that the first character is `[` (JSON array)
             first_char = f.read(1)
             if first_char != b'[':
-                print("❌ Le fichier ne commence pas par un '[' (tableau JSON).")
+                print("❌ File does not start with '[' (expected JSON array).")
                 return
 
-            # Vérifie que le dernier caractère significatif est `]`
+            # Check that the last significant character is `]`
             f.seek(-1, os.SEEK_END)
             while True:
                 last_char = f.read(1)
@@ -28,23 +28,23 @@ def validate_json_array(file_path):
                 else:
                     break
             if last_char != b']':
-                print("❌ Le fichier ne se termine pas par un ']' (fin de tableau JSON).")
+                print("❌ File does not end with ']' (expected end of JSON array).")
                 return
 
-        # Stream parsing du contenu
+        # Stream-parse the content
         count = 0
         with open(file_path, 'rb') as f:
             parser = ijson.items(f, 'item')
             for item in parser:
                 if not isinstance(item, dict):
-                    print(f"❌ Élément {count} n'est pas un objet JSON valide.")
+                    print(f"❌ Element {count} is not a valid JSON object.")
                     return
                 count += 1
 
-        print(f"✅ Fichier JSON valide. {count} objets lus avec succès.")
+        print(f"✅ Valid JSON file. {count} objects read successfully.")
 
     except Exception as e:
-        print(f"❌ Erreur pendant la lecture ou le parsing : {e}")
+        print(f"❌ Error while reading or parsing: {e}")
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
@@ -52,7 +52,7 @@ if __name__ == '__main__':
             os.path.dirname(__file__),
             '../data/stoptimes.json'
         )
-        print(f"ℹ️ Aucun chemin fourni, utilisation par défaut : {default_path}")
+        print(f"ℹ️ No path provided, using default: {default_path}")
         validate_json_array(default_path)
     else:
         validate_json_array(sys.argv[1])

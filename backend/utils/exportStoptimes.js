@@ -29,7 +29,7 @@ async function exportStoptimes() {
         }
         writeStream.write('\n]\n');
         writeStream.end();
-        console.log('Export terminé !');
+        console.log('Export finished!');
     } finally {
         await client.close();
     }

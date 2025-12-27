@@ -239,19 +239,19 @@ const getRoutesInBbox = asyncHandler(async (req, res) => {
     res.json({ type: "FeatureCollection", features });
 });
 
-// Retourne la géométrie complète d'une route + arrêts + trip_schedules
+// Returns the full geometry of a route + stops + trip_schedules
 const getRouteGeometry = asyncHandler(async (req, res) => {
     const routeId = req.params.route_id || req.query.route_id;
     if (!routeId) return res.status(400).json({ error: 'route_id missing' });
 
-    // Limite de sécurité sur le nombre de trips
+    // Safety limit on number of trips
     const maxTrips = Math.max(1, Math.min(Number(req.query.max_trips ?? 500), 5000));
 
-    // Récupère la route
+    // Fetch the route
     const route = await ProcessedRoute.findOne({ route_id: routeId }).lean();
     if (!route) return res.status(404).json({ error: 'route not found' });
 
-    // Récupère les trips et stop_times associés à la route
+    // Fetch trips and stop_times associated with the route
     const trips = await ProcessedStopTimes.find({ route_id: routeId }, {
         trip_id: 1,
         original_trip_id: 1,

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { searchProcessedStops } from "../../services/StopsApiCalls";
+import { searchProcessedStops } from "@/services/StopsApiCalls";
 import "./Search.css";
 
 type Stop = {
@@ -42,7 +42,7 @@ export default function Search({ onHamburger, onStopSelect }: Props) {
     }, [query, type]);
 
     const handleSelect = (stop: Stop) => {
-        console.log("Suggestion cliquée :", stop); // Ajout du log
+        console.log("Suggestion clicked:", stop); // Added log
         setQuery("");
         setSuggestions([]);
         if (onStopSelect) onStopSelect(stop);
@@ -76,11 +76,11 @@ export default function Search({ onHamburger, onStopSelect }: Props) {
                 value={type}
                 onChange={e => setType(e.target.value)}
             >
-                <option value="">Tous</option>
+                <option value="">All</option>
                 <option value="train">Train</option>
                 <option value="bus">Bus</option>
-                <option value="metro">Métro</option>
-                <option value="boat">Bateau</option>
+                <option value="metro">Metro</option>
+                <option value="boat">Boat</option>
             </select>
             <div className="search-magnifier">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -88,7 +88,7 @@ export default function Search({ onHamburger, onStopSelect }: Props) {
                     <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                 </svg>
             </div>
-            <button aria-label="Profil" className="search-avatar">
+            <button aria-label="Profile" className="search-avatar">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="8" r="4"></circle>
                     <path d="M6 20c0-2.2 3.6-4 6-4s6 1.8 6 4"></path>

@@ -11,7 +11,7 @@ const MIN_INTERVAL_MS = 15_000;
 const RAW_CACHE_DURATION_MS = Number(process.env.REALTIME_CACHE_MS || 15_000);
 const EFFECTIVE_CACHE_MS = Math.max(MIN_INTERVAL_MS, RAW_CACHE_DURATION_MS);
 
-// Historique des fetchs (fenêtre glissante 60s)
+// fetch history for rate limiting
 let fetchTimestamps = [];
 
 // Cache pour le feed brut et états
@@ -19,14 +19,14 @@ let cachedEntities = [];
 let lastFetchTime = 0;
 let lastFetchedAtISO = null;
 let pendingPromise = null;
-let customFetcher = null; // injectable pour tests
+let customFetcher = null; // for the tests
 
-// Cache normalisé + index pour filtrage ultra rapide
+// normalized cache + indexes
 let cachedTripUpdatesNormalized = [];
 let indexByTripId = new Map();
 let indexByOriginalTripId = new Map();
 
-// Poller automatique
+// automatic poller
 let pollerTimer = null;
 
 function isCacheFresh() {
@@ -35,7 +35,7 @@ function isCacheFresh() {
 }
 
 function updateNormalizedCachesFromEntities() {
-    // Recalcule le tableau normalisé et les index à partir des entities brutes
+    // Recalculate normalized caches and indexes
     const tripUpdates = parseTripUpdates(cachedEntities).map(normalizeTripUpdate);
     cachedTripUpdatesNormalized = tripUpdates;
     indexByTripId = new Map();
@@ -215,7 +215,7 @@ function filterTripUpdatesByIds(tripUpdates, ids) {
     });
 }
 
-// ---- Nouveaux helpers pour le mode auto-refresh et le filtrage rapide ----
+//New functions to access cached data directly
 function getCachedTripUpdates() {
     const now = Date.now();
     const cacheAgeMs = lastFetchTime ? (now - lastFetchTime) : Infinity;
@@ -245,7 +245,7 @@ function filterTripUpdatesByIdsCached(ids) {
 }
 
 async function refreshRealtimeNow() {
-    // Force un fetch immédiat (respecte encore les limites via fetchGTFSFeed)
+    // forces a fetch, bypassing cache
     return await fetchGTFSFeed();
 }
 

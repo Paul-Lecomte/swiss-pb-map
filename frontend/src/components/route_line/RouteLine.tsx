@@ -13,7 +13,7 @@ const RouteLine: React.FC<RouteLineProps> = ({ route, color = "#0074D9", onClick
         return null;
     }
 
-    // Assure numeric values and bon ordre: backend fournit [lon, lat]
+    // Ensure coordinates are valid [lat, lon] pairs
     const positions = route.geometry.coordinates
         .map((coord: any) => {
             const lon = Number(coord[0]);

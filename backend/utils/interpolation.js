@@ -68,8 +68,8 @@ function computeProgress(predictedEpochTimes, nowEpoch) {
     return { prevStopIdx: predictedEpochTimes.length - 2, nextStopIdx: predictedEpochTimes.length - 1, fraction: 1 };
 }
 
-// Tronque une polyline (array de [lon,lat]) à une bbox [minLng,minLat,maxLng,maxLat]
-// Ajoute un padding optionnel pour éviter des coupures trop brutales aux bords
+// Clip a polyline (array of [lon,lat]) to a bbox [minLng,minLat,maxLng,maxLat]
+// Add an optional padding to avoid abrupt cuts at the edges
 function clipPolylineToBBox(coords, bbox, pad = 0) {
     if (!Array.isArray(coords) || coords.length === 0 || !Array.isArray(bbox) || bbox.length !== 4) return coords || [];
     const [minLng, minLat, maxLng, maxLat] = bbox;
@@ -82,16 +82,16 @@ function clipPolylineToBBox(coords, bbox, pad = 0) {
         if (inside) {
             out.push(p);
         } else if (prevInside && out.length) {
-            // point sortant: insère un point à la frontière approximative pour conserver continuité
+            // outgoing point: insert a point at the approximate boundary to preserve continuity
             const last = out[out.length - 1];
-            const t = 0.5; // simple mid interpolation (evite complex line-bbox intersection)
+            const t = 0.5; // simple mid interpolation (avoids complex line-bbox intersection)
             out.push(lerp(last, p, t));
         }
         prevInside = inside;
     }
-    // Si rien à l'intérieur, retourne éventuellement un court segment autour du centre bbox
+    // If nothing inside, optionally return a short segment around bbox center
     if (!out.length) {
-        // heuristique: prend les points proches (dans 2*pad) si dispo
+        // heuristic: take points that are near (within 2*pad) if available
         const near = coords.filter(c => c[0] >= minX - pad && c[0] <= maxX + pad && c[1] >= minY - pad && c[1] <= maxY + pad);
         return near.length ? near : [];
     }

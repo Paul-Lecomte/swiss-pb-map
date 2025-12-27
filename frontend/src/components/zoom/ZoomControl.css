@@ -22,7 +22,7 @@
     border-radius: 12px;
 }
 
-/* Boutons ronds */
+/* Round buttons */
 .zoom-control button {
     color: black;
     width: 32px;
@@ -44,23 +44,23 @@
     background: #f5f5f5;
 }
 
-/* Slider vertical */
+/* Vertical slider */
 .zoom-slider {
     -webkit-appearance: none;
     appearance: none;
     writing-mode: bt-lr;            /* Firefox */
     transform: rotate(-90deg);      /* Chrome/Safari */
-    width: 120px;                   /* longueur (après rotation = hauteur) */
-    height: 8px;                    /* épaisseur */
+    width: 120px;                   /* length (after rotation = height) */
+    height: 8px;                    /* thickness */
     margin: 45% 0;
     background: transparent;
     cursor: pointer;
 }
 
-/* Track du slider */
+/* Slider track */
 .zoom-slider::-webkit-slider-runnable-track {
-    width: 100%;                    /* prend toute la longueur */
-    height: 8px;                    /* épaisseur */
+    width: 100%;                    /* takes full length */
+    height: 8px;                    /* thickness */
     background: white;
     border: 1px solid #ccc;
     border-radius: 10px;
@@ -76,7 +76,7 @@
     box-shadow: 0 1px 4px rgba(0,0,0,0.2);
 }
 
-/* Curseur rond */
+/* Round thumb */
 .zoom-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
     width: 14px;
@@ -85,7 +85,7 @@
     background: black;
     border: 2px solid white;
     cursor: pointer;
-    margin-top: -3px; /* aligne le thumb sur le track */
+    margin-top: -3px; /* aligns the thumb on the track */
 }
 
 .zoom-slider::-moz-range-thumb {
