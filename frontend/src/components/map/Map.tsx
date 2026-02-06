@@ -372,7 +372,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
                 worker.addEventListener('message', onMessage);
                 worker.postMessage({
                     cmd: 'stream',
-                    apiBase: (process as any)?.env?.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000/api',
+                    apiBase: (process as any)?.env?.API_BASE_URL || 'http://localhost:3000/api',
                     bbox,
                     zoom,
                     knownIds,

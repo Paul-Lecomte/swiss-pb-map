@@ -2,10 +2,10 @@
 import axios from "axios";
 
 // Base URL configurable via NEXT_PUBLIC_API_BASE_URL (fallback to localhost)
-interface EnvProcess { env?: { NEXT_PUBLIC_API_BASE_URL?: string } }
+interface EnvProcess { env?: { API_BASE_URL?: string } }
 const maybeProc: EnvProcess | undefined = typeof process !== 'undefined' ? (process as unknown as EnvProcess) : undefined;
-const API_BASE_URL = maybeProc?.env?.NEXT_PUBLIC_API_BASE_URL
-  ? String(maybeProc.env.NEXT_PUBLIC_API_BASE_URL).replace(/\/$/, '')
+const API_BASE_URL = maybeProc?.env?.API_BASE_URL
+  ? String(maybeProc.env.API_BASE_URL).replace(/\/$/, '')
   : "http://localhost:3000/api";
 
 export const realtimeUpdatesByTripIds = async (tripIds: string[]) => {

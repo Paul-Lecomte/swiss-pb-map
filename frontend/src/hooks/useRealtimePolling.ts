@@ -36,13 +36,15 @@ export function useRealtimePolling(bbox: number[] | null, intervalMs = 12000) {
   const timerRef = useRef<number | null>(null);
   const lastBboxRef = useRef<string | null>(null);
 
+  const base_url = process.env.API_BASE_URL
+
   // Debounced bbox string
   const bboxStr = bbox ? bbox.join(',') : null;
 
   useEffect(() => {
     function fetchData() {
       if (!bboxStr) return;
-      fetch(`http://localhost:3000/api/realtime/interpolated?bbox=${bboxStr}`)
+      fetch(base_url + `/realtime/interpolated?bbox=${bboxStr}`)
         .then(r => r.json())
         .then(fc => {
           setPrevData(data);
