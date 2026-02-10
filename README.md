@@ -2,7 +2,7 @@
 <p align="center">
   <img src="./frontend/public/swisstransitmap_logo.png" alt="SwissTransitMap Logo" width="120" />
 </p>
-<h1 align="center">SwissTransitMap</h1>
+<h1 align="center">Swiss PB Map</h1>
 <p align="center">
   <strong>Swiss public transport network visualization & route planning</strong><br>
   <a href="https://github.com/Paul-Lecomte/swiss-pb-map/stargazers">
@@ -17,7 +17,7 @@
   <img alt="License" src="https://img.shields.io/github/license/Paul-Lecomte/swiss-pb-map">
 </p>
 
-## What is SwissTransitMap?
+## What is Swiss PB Map?
 
 SwissTransitMap is an interactive web app that visualizes the Swiss public transport network using GTFS data. It lets you explore stops, routes and timetables, see selected real‑time information, and plan journeys on a modern, intuitive map.
 
