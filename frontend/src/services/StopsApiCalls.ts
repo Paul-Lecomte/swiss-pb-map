@@ -1,9 +1,7 @@
 import axios from "axios";
+import { getApiBaseUrl } from "@/utils/apiBase";
 
-// Base URL configurable via NEXT_PUBLIC_API_BASE_URL (fallback to localhost)
-const API_BASE_URL = (typeof process !== 'undefined' && (process as any).env && (process as any).env.API_BASE_URL)
-  ? (process as any).env.API_BASE_URL.replace(/\/$/, '')
-  : "http://localhost:3000/api";
+const API_BASE_URL = getApiBaseUrl();
 
 export const fetchProcessedStops = async () => {
     const response = await axios.get(`${API_BASE_URL}/gtfs/all_processed_stop`);

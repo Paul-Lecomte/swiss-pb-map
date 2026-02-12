@@ -16,6 +16,18 @@ import Vehicle from "@/components/vehicle/Vehicle";
 import { LayerState } from "../layer_option/LayerOption";
 import StreamProgress from "@/components/progress/StreamProgress";
 import { getRouteGeometry, getRouteGeometryByTrip } from "@/services/RouteApi";
+import { getApiBaseUrl } from "@/utils/apiBase";
+
+const API_BASE_URL = getApiBaseUrl();
+
+// Base URL depuis .env uniquement (pas de fallback)
+// interface EnvProcess { env?: { NEXT_PUBLIC_API_BASE_URL?: string } }
+// const maybeProc: EnvProcess | undefined = typeof process !== 'undefined' ? (process as unknown as EnvProcess) : undefined;
+// const API_BASE_URL_RAW = maybeProc?.env?.NEXT_PUBLIC_API_BASE_URL;
+// if (!API_BASE_URL_RAW) {
+//     throw new Error('NEXT_PUBLIC_API_BASE_URL manquant dans .env');
+// }
+// const API_BASE_URL = String(API_BASE_URL_RAW).replace(/\/$/, '');
 
 // Layer visibility state type
 type LayerKeys = "railway" | "stations" | "tram" | "bus" | "trolleybus" | "ferry" | "backgroundPois";
@@ -372,7 +384,7 @@ const MapView  = ({ onHamburger, layersVisible, setLayersVisible, optionPrefs }:
                 worker.addEventListener('message', onMessage);
                 worker.postMessage({
                     cmd: 'stream',
-                    apiBase: (process as any)?.env?.API_BASE_URL || 'http://localhost:3000/api',
+                    apiBase: API_BASE_URL,
                     bbox,
                     zoom,
                     knownIds,

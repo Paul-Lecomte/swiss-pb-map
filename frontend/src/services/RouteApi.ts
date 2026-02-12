@@ -1,7 +1,7 @@
+import { getApiBaseUrl } from "@/utils/apiBase";
+
 interface FetchOpts { simplify?: number; includeStops?: boolean; maxTrips?: number }
-interface Env { env?: { API_BASE_URL?: string } }
-const maybeProc: Env | undefined = typeof process !== 'undefined' ? (process as unknown as Env) : undefined;
-const API_BASE = maybeProc?.env?.API_BASE_URL?.replace(/\/$/, '') || 'http://localhost:3000/api';
+const API_BASE = getApiBaseUrl();
 
 type Feature = { type: 'Feature'; geometry: any; properties: Record<string, any> };
 const cache = new Map<string, { at: number; data: Feature }>();

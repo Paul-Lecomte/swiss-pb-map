@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { getApiBaseUrl } from '@/utils/apiBase';
 
 interface Vehicle {
   trip_id: string;
@@ -36,7 +37,7 @@ export function useRealtimePolling(bbox: number[] | null, intervalMs = 12000) {
   const timerRef = useRef<number | null>(null);
   const lastBboxRef = useRef<string | null>(null);
 
-  const base_url = process.env.API_BASE_URL
+  const base_url = getApiBaseUrl();
 
   // Debounced bbox string
   const bboxStr = bbox ? bbox.join(',') : null;
@@ -63,8 +64,7 @@ export function useRealtimePolling(bbox: number[] | null, intervalMs = 12000) {
     timerRef.current = window.setInterval(fetchData, intervalMs);
 
     return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
-  }, [bboxStr, intervalMs]);
+  }, [bboxStr, intervalMs, base_url]);
 
   return { current: data, previous: prevData };
 }
-

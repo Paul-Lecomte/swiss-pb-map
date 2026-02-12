@@ -6,7 +6,7 @@ self.addEventListener('message', async (evt) => {
   const msg = evt.data;
   if (!msg || msg.cmd !== 'stream') return;
   const {
-    apiBase = 'http://localhost:3000/api',
+    apiBase,
     bbox,
     zoom,
     knownIds = [],
@@ -19,6 +19,11 @@ self.addEventListener('message', async (evt) => {
     batchMs = 200,
     maxRoutes = 100,
   } = msg;
+
+  if (!apiBase) {
+    self.postMessage({ type: 'error', message: 'API_BASE_URL manquant (apiBase)' });
+    return;
+  }
 
   let aborted = false;
   const abortController = new AbortController();
