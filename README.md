@@ -187,7 +187,7 @@ PG_SSL=false
 Create `frontend/.env` with the following keys (example names — do not commit secrets):
 
 ```
-API_BASE_URL=http://localhost:3000/api
+NEXT_PUBLIC_API_BASE_URL=http://localhost:3000/api
 ```
 
 ---
